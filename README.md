@@ -6,6 +6,8 @@ A collection of utility and visual modules for VCV Rack 2.
 
 ### Notes
 
+![Notes module](docs/notes.png)
+
 A resizable notes canvas with smart text editing.
 
 - Pure black / pure white canvas, dark-mode toggle
@@ -24,6 +26,8 @@ A resizable notes canvas with smart text editing.
 - Caret blinks to macOS-standard timing
 
 ### Tidy
+
+![Tidy module](docs/tidy.png)
 
 Selectively hide or fade individual modules and cables without changing global cable opacity.
 
