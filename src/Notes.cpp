@@ -13,7 +13,7 @@
 
 struct NotesModule : Module {
     std::string text;
-    std::string title = "notes";
+    std::string title = "journal";
     int widthHP = 6;
     bool hideLogo = false;
     bool rawMode = false;
@@ -1440,7 +1440,7 @@ struct NotesTextField : ui::TextField {
 
     void openContextMenu() {
         ui::Menu* menu = createMenu();
-        menu->addChild(createMenuLabel("Notes"));
+        menu->addChild(createMenuLabel("Journal"));
 
         menu->addChild(createMenuItem("Undo", RACK_MOD_CTRL_NAME "+Z", [this]() {
             APP->event->setSelectedWidget(this); undo();
@@ -1527,7 +1527,7 @@ struct NotesTextField : ui::TextField {
             menu->addChild(createBoolPtrMenuItem("View mode \u2192 raw (show markers)", "", &nm->rawMode));
             menu->addChild(createMenuItem("Export as Markdown (.md)", "", [this]() {
                 if (!nm) return;
-                std::string def = (!nm->title.empty() ? nm->title : std::string("notes")) + ".md";
+                std::string def = (!nm->title.empty() ? nm->title : std::string("journal")) + ".md";
                 char* path = osdialog_file(OSDIALOG_SAVE, NULL, def.c_str(), NULL);
                 if (!path) return;
                 std::ofstream out(path);
@@ -1539,7 +1539,7 @@ struct NotesTextField : ui::TextField {
             }));
             menu->addChild(createMenuItem("Export as Text (.txt)", "", [this]() {
                 if (!nm) return;
-                std::string def = (!nm->title.empty() ? nm->title : std::string("notes")) + ".txt";
+                std::string def = (!nm->title.empty() ? nm->title : std::string("journal")) + ".txt";
                 char* path = osdialog_file(OSDIALOG_SAVE, NULL, def.c_str(), NULL);
                 if (!path) return;
                 std::ofstream out(path);
@@ -1662,6 +1662,7 @@ struct NotesResizeHandle : widget::OpaqueWidget {
 
 struct NotesWidget : ModuleWidget {
     NotesBackground* bg = nullptr;
+    app::PanelBorder* border = nullptr;
     NotesTextField* field = nullptr;
     NotesTextField* titleField = nullptr;
     NotesResizeHandle* handle = nullptr;
@@ -1684,6 +1685,10 @@ struct NotesWidget : ModuleWidget {
         bg->box.size = box.size;
         addChild(bg);
 
+        border = new app::PanelBorder;
+        border->box.size = box.size;
+        addChild(border);
+
         // Screws: 1 HP inset from corners
         topLeftScrew     = createWidget<ScrewBlack>(Vec(RACK_GRID_WIDTH, 0));
         topRightScrew    = createWidget<ScrewBlack>(Vec(box.size.x - RACK_GRID_WIDTH * 2, 0));
@@ -1703,7 +1708,7 @@ struct NotesWidget : ModuleWidget {
         titleField->showScrollbar = false;
         titleField->fontSize = 10.5f;
         titleField->textOffset = Vec(4.f, 3.f);
-        titleField->placeholder = "notes";
+        titleField->placeholder = "journal";
         if (module) titleField->text = module->title;
         addChild(titleField);
 
@@ -1764,6 +1769,7 @@ struct NotesWidget : ModuleWidget {
         NotesModule* m = dynamic_cast<NotesModule*>(this->module);
         if (m) box.size.x = m->widthHP * RACK_GRID_WIDTH;
         if (bg) bg->box.size = box.size;
+        if (border) border->box.size = box.size;
         layout();
         ModuleWidget::step();
     }
@@ -1777,7 +1783,7 @@ struct NotesWidget : ModuleWidget {
         menu->addChild(createBoolPtrMenuItem("Raw mode (show markers)", "", &m->rawMode));
 
         menu->addChild(createMenuItem("Export as Markdown (.md)", "", [m]() {
-            std::string def = (!m->title.empty() ? m->title : std::string("notes")) + ".md";
+            std::string def = (!m->title.empty() ? m->title : std::string("journal")) + ".md";
             char* path = osdialog_file(OSDIALOG_SAVE, NULL, def.c_str(), NULL);
             if (!path) return;
             std::ofstream out(path);
@@ -1789,7 +1795,7 @@ struct NotesWidget : ModuleWidget {
         }));
 
         menu->addChild(createMenuItem("Export as Text (.txt)", "", [m]() {
-            std::string def = (!m->title.empty() ? m->title : std::string("notes")) + ".txt";
+            std::string def = (!m->title.empty() ? m->title : std::string("journal")) + ".txt";
             char* path = osdialog_file(OSDIALOG_SAVE, NULL, def.c_str(), NULL);
             if (!path) return;
             std::ofstream out(path);
@@ -1838,4 +1844,4 @@ struct NotesWidget : ModuleWidget {
     }
 };
 
-Model* modelNotes = createModel<NotesModule, NotesWidget>("Notes");
+Model* modelNotes = createModel<NotesModule, NotesWidget>("journal");

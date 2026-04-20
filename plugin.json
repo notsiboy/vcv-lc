@@ -14,16 +14,22 @@
   "changelogUrl": "",
   "modules": [
     {
-      "slug": "Notes",
-      "name": "Notes",
-      "description": "Resizable notes canvas with smart text editing, markdown formatting, headings, lists, and exports.",
+      "slug": "journal",
+      "name": "journal",
+      "description": "Resizable journal canvas with smart text editing, markdown formatting, headings, lists, and exports.",
       "tags": ["Utility", "Visual"]
     },
     {
-      "slug": "Tidy",
-      "name": "Tidy",
+      "slug": "tidy",
+      "name": "tidy",
       "description": "Selectively hide or fade individual modules and cables without changing global cable opacity.",
       "tags": ["Utility", "Visual"]
+    },
+    {
+      "slug": "grab",
+      "name": "grab",
+      "description": "Auto-triggered one-shot recorder. Records until silent, writes WAV with optional fades and normalise.",
+      "tags": ["Recording", "Utility"]
     }
   ]
 }

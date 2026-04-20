@@ -225,11 +225,49 @@ static void drawToggleButton(NVGcontext* vg, float w, float h, bool dark) {
     nvgStroke(vg);
 }
 
+static void drawCenterLed(NVGcontext* vg, float w, float h, NVGcolor color, bool on, bool dark) {
+    float cx = w / 2.f;
+    float cy = h / 2.f;
+    float rOuter = std::min(cx, cy) - 0.5f;
+    float rLed = rOuter * 0.50f;
+    NVGcolor offC = dark ? nvgRGB(80, 80, 80) : nvgRGB(180, 180, 180);
+    nvgBeginPath(vg);
+    nvgCircle(vg, cx, cy, rLed);
+    nvgFillColor(vg, on ? color : offC);
+    nvgFill(vg);
+}
+
+static void drawCenterLedGlow(NVGcontext* vg, float w, float h, NVGcolor color) {
+    float cx = w / 2.f;
+    float cy = h / 2.f;
+    float rOuter = std::min(cx, cy) - 0.5f;
+    float rLed = rOuter * 0.50f;
+    NVGpaint glow = nvgRadialGradient(vg, cx, cy, rLed * 0.6f, rLed * 3.f,
+        nvgRGBA((int)(color.r * 255), (int)(color.g * 255), (int)(color.b * 255), 140),
+        nvgRGBA((int)(color.r * 255), (int)(color.g * 255), (int)(color.b * 255), 0));
+    nvgBeginPath(vg);
+    nvgRect(vg, cx - rLed * 4, cy - rLed * 4, rLed * 8, rLed * 8);
+    nvgFillPaint(vg, glow);
+    nvgFill(vg);
+}
+
 struct EnableToggleWidget : widget::OpaqueWidget {
     TidyModule* tm = nullptr;
 
+    bool isOn() const { return tm && tm->masterEnable; }
+
     void draw(const DrawArgs& args) override {
-        drawToggleButton(args.vg, box.size.x, box.size.y, lc::theme.dark);
+        bool dark = lc::theme.dark;
+        drawToggleButton(args.vg, box.size.x, box.size.y, dark);
+        drawCenterLed(args.vg, box.size.x, box.size.y,
+                      nvgRGB(60, 210, 90), isOn(), dark);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1 && isOn()) {
+            drawCenterLedGlow(args.vg, box.size.x, box.size.y, nvgRGB(60, 210, 90));
+        }
+        Widget::drawLayer(args, layer);
     }
 
     void onButton(const event::Button& e) override {
@@ -283,8 +321,25 @@ struct StateLedWidget : widget::Widget {
 struct PickerToggleWidget : widget::OpaqueWidget {
     TidyModule* tm = nullptr;
 
+    bool isOn() const { return tm && tm->pickerMode != 0; }
+    NVGcolor currentColor() const {
+        if (!tm) return nvgRGB(0, 0, 0);
+        if (tm->pickerMode == 1) return nvgRGB(70, 140, 240);   // blue
+        if (tm->pickerMode == 2) return nvgRGB(180, 80, 220);   // purple
+        return nvgRGB(0, 0, 0);
+    }
+
     void draw(const DrawArgs& args) override {
-        drawToggleButton(args.vg, box.size.x, box.size.y, lc::theme.dark);
+        bool dark = lc::theme.dark;
+        drawToggleButton(args.vg, box.size.x, box.size.y, dark);
+        drawCenterLed(args.vg, box.size.x, box.size.y, currentColor(), isOn(), dark);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1 && isOn()) {
+            drawCenterLedGlow(args.vg, box.size.x, box.size.y, currentColor());
+        }
+        Widget::drawLayer(args, layer);
     }
 
     void onButton(const event::Button& e) override {
@@ -506,17 +561,25 @@ struct StateLabelWidget : widget::Widget {
 
 TidyWidget::TidyWidget(TidyModule* module) {
     setModule(module);
-    setPanel(createPanel(asset::plugin(pluginInstance, "res/Tidy.svg")));
+    // Skip setPanel — Rack's SvgPanel wraps its SVG in a cached FramebufferWidget,
+    // which the shared lc::theme toggle can't invalidate. Matching Notes' pattern
+    // (manual box + BackgroundWidget as first child) keeps theme changes live.
+    box.size = Vec(RACK_GRID_WIDTH * 3, RACK_GRID_HEIGHT);
 
     BackgroundWidget* bg = new BackgroundWidget;
     bg->tm = module;
     bg->box.size = box.size;
     bg->box.pos = Vec(0, 0);
-    addChildBottom(bg);
+    addChild(bg);
 
     float screwX = (box.size.x - RACK_GRID_WIDTH) / 2.f;
     addChild(createWidget<ScrewBlack>(Vec(screwX, 0)));
     addChild(createWidget<ScrewBlack>(Vec(screwX, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+
+    // Thin grey outline — matches Rack's default module border.
+    app::PanelBorder* border = new app::PanelBorder;
+    border->box.size = box.size;
+    addChild(border);
 
     float logoTopMM = 128.5f - 8.f - 9.f;
 
@@ -533,36 +596,28 @@ TidyWidget::TidyWidget(TidyModule* module) {
         toggle->box.pos = Vec((box.size.x - toggle->box.size.x) / 2.f, mm2px(anchorMM));
         addChild(toggle);
     };
-    auto placeLed = [&](float anchorMM, widget::Widget* led) {
-        led->box.size = mm2px(Vec(1.6f, 1.6f));
-        led->box.pos = Vec((box.size.x - led->box.size.x) / 2.f, mm2px(anchorMM - 3.f));
-        addChild(led);
-    };
-    auto placeLabel = [&](float anchorMM, const std::string& text) {
+    auto placeLabelAbove = [&](float anchorMM, const std::string& text) {
         StateLabelWidget* label = new StateLabelWidget;
         label->text = text;
         label->tm = module;
         label->box.size = Vec(box.size.x, mm2px(3.f));
-        label->box.pos = Vec(0, mm2px(anchorMM + 6.f));
+        // Label sits just above the 5mm toggle button.
+        label->box.pos = Vec(0, mm2px(anchorMM - 3.f));
         addChild(label);
     };
 
+    // Enable (bottom) — green LED in centre when on.
     EnableToggleWidget* enableToggle = new EnableToggleWidget;
     enableToggle->tm = module;
     placeToggle(logoTopMM - 10.f, enableToggle);
-    StateLedWidget* enableLed = new StateLedWidget;
-    enableLed->state = module ? &module->masterEnable : nullptr;
-    enableLed->onColor = nvgRGB(60, 210, 90);
-    placeLed(logoTopMM - 10.f, enableLed);
-    placeLabel(logoTopMM - 10.f, "enable");
+    placeLabelAbove(logoTopMM - 10.f, "tidy");
 
+    // Pick (above) — blue LED for hide, purple for invert.
+    // Brought closer to the enable toggle now that the LED is inside the button.
     PickerToggleWidget* pickerToggle = new PickerToggleWidget;
     pickerToggle->tm = module;
-    placeToggle(logoTopMM - 25.f, pickerToggle);
-    PickerLedWidget* pickerLed = new PickerLedWidget;
-    pickerLed->tm = module;
-    placeLed(logoTopMM - 25.f, pickerLed);
-    placeLabel(logoTopMM - 25.f, "pick");
+    placeToggle(logoTopMM - 21.f, pickerToggle);
+    placeLabelAbove(logoTopMM - 21.f, "pick");
 
     if (module && APP && APP->scene && APP->scene->rack) {
         pickerOverlay = new PickerOverlay;
@@ -776,4 +831,4 @@ void TidyWidget::step() {
     }
 }
 
-Model* modelTidy = createModel<TidyModule, TidyWidget>("Tidy");
+Model* modelTidy = createModel<TidyModule, TidyWidget>("tidy");

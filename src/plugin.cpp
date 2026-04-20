@@ -8,4 +8,5 @@ void init(Plugin* p) {
     lc::loadTheme();
     p->addModel(modelNotes);
     p->addModel(modelTidy);
+    p->addModel(modelGrab);
 }

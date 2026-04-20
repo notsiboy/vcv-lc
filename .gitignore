@@ -5,3 +5,4 @@ plugin.so
 plugin.dll
 *.vcvplugin
 .DS_Store
+test/
