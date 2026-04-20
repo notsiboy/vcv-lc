@@ -28,7 +28,6 @@ struct TidyModule : Module {
     bool masterEnable = true;
     bool hidePlugHeads = false;
     int pickerMode = 0;
-    bool darkMode = false;
     float darkModuleStrength = 1.f;
     std::vector<float> colorOpacity;
     std::map<int64_t, ModuleRule> moduleRules;

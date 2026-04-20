@@ -1,4 +1,5 @@
 #include "Tidy.hpp"
+#include "Theme.hpp"
 
 static json_t* serializePresetBody(const Preset& p);
 static Preset deserializePresetBody(json_t* j);
@@ -12,7 +13,6 @@ json_t* TidyModule::dataToJson() {
     json_t* root = json_object();
     json_object_set_new(root, "masterEnable", json_boolean(masterEnable));
     json_object_set_new(root, "hidePlugHeads", json_boolean(hidePlugHeads));
-    json_object_set_new(root, "darkMode", json_boolean(darkMode));
     json_object_set_new(root, "darkModuleStrength", json_real(darkModuleStrength));
 
     json_t* colorsJ = json_array();
@@ -132,8 +132,9 @@ void TidyModule::deletePreset(size_t index) {
 void TidyModule::dataFromJson(json_t* root) {
     if (json_t* j = json_object_get(root, "masterEnable")) masterEnable = json_boolean_value(j);
     if (json_t* j = json_object_get(root, "hidePlugHeads")) hidePlugHeads = json_boolean_value(j);
-    if (json_t* j = json_object_get(root, "darkMode")) darkMode = json_boolean_value(j);
     if (json_t* j = json_object_get(root, "darkModuleStrength")) darkModuleStrength = json_real_value(j);
+    // Back-compat: migrate old per-patch darkMode into the shared setting.
+    if (json_t* j = json_object_get(root, "darkMode")) lc::theme.dark = json_boolean_value(j);
 
     colorOpacity.assign(settings::cableColors.size(), 1.f);
     if (json_t* colorsJ = json_object_get(root, "colorOpacity")) {
@@ -173,7 +174,7 @@ struct PngImageWidget : widget::Widget {
     std::string darkPath;
     TidyModule* tm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = tm && tm->darkMode;
+        bool dark = lc::theme.dark;
         std::string use = (dark && !darkPath.empty()) ? darkPath : path;
         std::shared_ptr<window::Image> img = APP->window->loadImage(use);
         if (!img || img->handle < 0) return;
@@ -188,7 +189,7 @@ struct PngImageWidget : widget::Widget {
 struct BackgroundWidget : widget::Widget {
     TidyModule* tm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = tm && tm->darkMode;
+        bool dark = lc::theme.dark;
         nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
         nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
@@ -228,7 +229,7 @@ struct EnableToggleWidget : widget::OpaqueWidget {
     TidyModule* tm = nullptr;
 
     void draw(const DrawArgs& args) override {
-        drawToggleButton(args.vg, box.size.x, box.size.y, tm && tm->darkMode);
+        drawToggleButton(args.vg, box.size.x, box.size.y, lc::theme.dark);
     }
 
     void onButton(const event::Button& e) override {
@@ -283,7 +284,7 @@ struct PickerToggleWidget : widget::OpaqueWidget {
     TidyModule* tm = nullptr;
 
     void draw(const DrawArgs& args) override {
-        drawToggleButton(args.vg, box.size.x, box.size.y, tm && tm->darkMode);
+        drawToggleButton(args.vg, box.size.x, box.size.y, lc::theme.dark);
     }
 
     void onButton(const event::Button& e) override {
@@ -493,7 +494,7 @@ struct StateLabelWidget : widget::Widget {
         std::shared_ptr<window::Font> font = APP->window->loadFont(
             asset::system("res/fonts/Nunito-Bold.ttf"));
         if (!font || !font->handle) return;
-        bool dark = tm && tm->darkMode;
+        bool dark = lc::theme.dark;
         nvgFontFaceId(args.vg, font->handle);
         nvgFontSize(args.vg, 7.f);
         nvgTextLetterSpacing(args.vg, 0.2f);

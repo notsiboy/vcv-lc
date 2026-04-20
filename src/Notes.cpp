@@ -1,4 +1,5 @@
 #include "plugin.hpp"
+#include "Theme.hpp"
 #include <ui/TextField.hpp>
 #include <osdialog.h>
 #include <cctype>
@@ -14,7 +15,6 @@ struct NotesModule : Module {
     std::string text;
     std::string title = "notes";
     int widthHP = 6;
-    bool darkMode = false;
     bool hideLogo = false;
     bool rawMode = false;
 
@@ -33,7 +33,6 @@ struct NotesModule : Module {
         json_object_set_new(root, "text", json_string(text.c_str()));
         json_object_set_new(root, "title", json_string(title.c_str()));
         json_object_set_new(root, "width", json_integer(widthHP));
-        json_object_set_new(root, "darkMode", json_boolean(darkMode));
         json_object_set_new(root, "hideLogo", json_boolean(hideLogo));
         json_object_set_new(root, "rawMode", json_boolean(rawMode));
         return root;
@@ -46,12 +45,13 @@ struct NotesModule : Module {
             title = json_string_value(j);
         if (json_t* j = json_object_get(root, "width"))
             widthHP = json_integer_value(j);
-        if (json_t* j = json_object_get(root, "darkMode"))
-            darkMode = json_boolean_value(j);
         if (json_t* j = json_object_get(root, "hideLogo"))
             hideLogo = json_boolean_value(j);
         if (json_t* j = json_object_get(root, "rawMode"))
             rawMode = json_boolean_value(j);
+        // Back-compat: inherit old per-patch darkMode into the shared setting.
+        if (json_t* j = json_object_get(root, "darkMode"))
+            lc::theme.dark = json_boolean_value(j);
     }
 };
 
@@ -254,14 +254,14 @@ struct NotesTextField : ui::TextField {
         return APP->window->loadFont(asset::system("res/fonts/ShareTechMono-Regular.ttf"));
     }
 
-    NVGcolor fgColor()  { return (nm && nm->darkMode) ? nvgRGB(235, 235, 235) : nvgRGB(20, 20, 20); }
-    NVGcolor selColor() { return (nm && nm->darkMode) ? nvgRGBA(255,255,255,60) : nvgRGBA(0,0,0,50); }
+    NVGcolor fgColor()  { return (lc::theme.dark) ? nvgRGB(235, 235, 235) : nvgRGB(20, 20, 20); }
+    NVGcolor selColor() { return (lc::theme.dark) ? nvgRGBA(255,255,255,60) : nvgRGBA(0,0,0,50); }
     NVGcolor markerColor() {
         NVGcolor c = fgColor();
         return nvgRGBA(c.r * 255, c.g * 255, c.b * 255, 95);
     }
     NVGcolor codeBg() {
-        return (nm && nm->darkMode) ? nvgRGBA(255,255,255,25) : nvgRGBA(0,0,0,20);
+        return (lc::theme.dark) ? nvgRGBA(255,255,255,25) : nvgRGBA(0,0,0,20);
     }
 
     uint8_t styleAt(int i) const {
@@ -1564,7 +1564,11 @@ struct NotesTextField : ui::TextField {
             }));
             menu->addChild(createBoolPtrMenuItem("Hide logo", "", &nm->hideLogo));
             menu->addChild(new ui::MenuSeparator);
-            menu->addChild(createBoolPtrMenuItem("Dark mode", "", &nm->darkMode));
+            menu->addChild(createMenuItem("Dark mode (shared)",
+                CHECKMARK(lc::theme.dark), []() {
+                    lc::theme.dark = !lc::theme.dark;
+                    lc::saveTheme();
+                }));
         }
     }
 };
@@ -1576,7 +1580,7 @@ struct NotesTextField : ui::TextField {
 struct NotesBackground : widget::Widget {
     NotesModule* nm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = nm && nm->darkMode;
+        bool dark = lc::theme.dark;
         nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
         nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
@@ -1588,7 +1592,7 @@ struct NotesLogo : widget::Widget {
     NotesModule* nm = nullptr;
     void draw(const DrawArgs& args) override {
         if (nm && nm->hideLogo) return;
-        bool dark = nm && nm->darkMode;
+        bool dark = lc::theme.dark;
         std::string path = asset::plugin(pluginInstance,
             dark ? "res/lc-icon-white.png" : "res/lc-icon-new.png");
         std::shared_ptr<window::Image> img = APP->window->loadImage(path);
@@ -1637,7 +1641,7 @@ struct NotesResizeHandle : widget::OpaqueWidget {
     }
 
     void draw(const DrawArgs& args) override {
-        bool dark = nm && nm->darkMode;
+        bool dark = lc::theme.dark;
         NVGcolor c = dark ? nvgRGBA(255,255,255,110) : nvgRGBA(0,0,0,110);
         float pad = 3.f;
         float w = box.size.x - pad;
@@ -1826,7 +1830,11 @@ struct NotesWidget : ModuleWidget {
         }));
         menu->addChild(createBoolPtrMenuItem("Hide logo", "", &m->hideLogo));
         menu->addChild(new ui::MenuSeparator);
-        menu->addChild(createBoolPtrMenuItem("Dark mode", "", &m->darkMode));
+        menu->addChild(createMenuItem("Dark mode (shared)",
+            CHECKMARK(lc::theme.dark), []() {
+                lc::theme.dark = !lc::theme.dark;
+                lc::saveTheme();
+            }));
     }
 };
 

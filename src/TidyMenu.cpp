@@ -1,4 +1,5 @@
 #include "Tidy.hpp"
+#include "Theme.hpp"
 
 namespace {
 
@@ -289,7 +290,11 @@ void TidyWidget::appendContextMenu(Menu* menu) {
 
     menu->addChild(new MenuSeparator);
 
-    menu->addChild(createBoolPtrMenuItem("Dark mode", "", &tm->darkMode));
+    menu->addChild(createMenuItem("Dark mode (shared)",
+        CHECKMARK(lc::theme.dark), []() {
+            lc::theme.dark = !lc::theme.dark;
+            lc::saveTheme();
+        }));
     menu->addChild(createBoolPtrMenuItem("Also hide plug heads", "", &tm->hidePlugHeads));
 
     menu->addChild(createMenuItem("Restore everything now", "", [this]() {
