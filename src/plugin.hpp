@@ -8,3 +8,4 @@ extern Model* modelNotes;
 extern Model* modelTidy;
 extern Model* modelGrab;
 extern Model* modelJump;
+extern Model* modelTake;

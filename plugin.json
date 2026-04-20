@@ -36,6 +36,12 @@
       "name": "jump",
       "description": "Saved-view bookmarks plus fuzzy module finder. Nine slots, back/forward history, Raycast-style palette.",
       "tags": ["Utility", "Visual"]
+    },
+    {
+      "slug": "take",
+      "name": "take",
+      "description": "Session-aware recorder. Rolls a continuous buffer of the last N seconds; click save to capture retroactively. Voice-memos style vertical waveform.",
+      "tags": ["Recording", "Utility"]
     }
   ]
 }
