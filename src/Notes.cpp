@@ -1,5 +1,6 @@
 #include "plugin.hpp"
 #include "Theme.hpp"
+#include "JournalEditor.hpp"
 #include <ui/TextField.hpp>
 #include <osdialog.h>
 #include <cctype>
@@ -511,30 +512,35 @@ struct NotesTextField : ui::TextField {
                 }
             }
 
-            // Detect bullet line (any char flagged ST_BULLET in this logical line)
+            // Detect bullet line (any char flagged ST_BULLET in this logical line).
+            // Bullets do NOT pad the first row — the "- " prefix renders at the
+            // normal left margin so bulleted lines align visually with regular
+            // paragraphs. Wrapped continuation rows DO get an indent so their
+            // content hangs past the bullet marker.
             bool isBulletLine = false;
             for (int k = lineStart; k < logEnd; k++) {
                 if (styleAt(k) & ST_BULLET) { isBulletLine = true; break; }
             }
-            float leftPad = isBulletLine ? 14.f : 0.f;
+            float hangPad = isBulletLine ? 10.f : 0.f;
 
             if (lineStart == logEnd) {
-                rows.push_back({lineStart, lineStart, y, logEnd < n, hLevel, false, leftPad});
+                rows.push_back({lineStart, lineStart, y, logEnd < n, hLevel, false, 0.f});
                 y += lh;
             } else {
                 const char* start = text.c_str() + lineStart;
                 const char* end = text.c_str() + logEnd;
                 NVGtextRow wrapRows[128];
-                int nrows = nvgTextBreakLines(vg, start, end, w - leftPad, wrapRows, 128);
+                int nrows = nvgTextBreakLines(vg, start, end, w, wrapRows, 128);
                 if (nrows == 0) {
-                    rows.push_back({lineStart, logEnd, y, logEnd < n, hLevel, isHR, leftPad});
+                    rows.push_back({lineStart, logEnd, y, logEnd < n, hLevel, isHR, 0.f});
                     y += lh;
                 } else {
                     for (int r = 0; r < nrows; r++) {
                         int rs = lineStart + (int)(wrapRows[r].start - start);
                         int re = lineStart + (int)(wrapRows[r].end - start);
                         bool last = (r == nrows - 1);
-                        rows.push_back({rs, re, y, last && logEnd < n, hLevel, isHR && (r == 0), leftPad});
+                        float pad = (r == 0) ? 0.f : hangPad;
+                        rows.push_back({rs, re, y, last && logEnd < n, hLevel, isHR && (r == 0), pad});
                         y += lh;
                     }
                 }
@@ -588,10 +594,13 @@ struct NotesTextField : ui::TextField {
         pos = math::clamp(pos, r.start, r.end);
         std::vector<StyledRun> runs = buildRowRuns(vg, rowIdx);
         float rowFS = rowBaseFontSize(rowIdx);
-        float x = 0.f;
+        // For centered / right-shifted rows the first run's x is offset from
+        // textOffset.x. When pos sits at the very start of the row, we want
+        // the caret at that shifted x, not back at the row's left margin.
+        float x = runs.empty() ? 0.f : (runs.front().x - textOffset.x);
         for (auto& run : runs) {
             if (pos >= run.end) { x = run.x + run.width - textOffset.x; continue; }
-            if (pos <= run.start) break;
+            if (pos <= run.start) { x = run.x - textOffset.x; break; }
             if (run.style & ST_MARKER) { x = run.x - textOffset.x; return x; }
             configureFontForStyle(vg, run.style, rowFS);
             float b[4];
@@ -636,7 +645,11 @@ struct NotesTextField : ui::TextField {
 
         float rowFS = rowBaseFontSize(rowIdx);
         int best = r.start;
-        float bestDist = std::abs(x - textOffset.x);
+        // Use the first run's x for the "before all runs" baseline distance —
+        // otherwise centred / indented rows place the caret way off to the
+        // left when the user clicks in the empty gutter to the left of text.
+        float startX = runs.empty() ? textOffset.x : runs.front().x;
+        float bestDist = std::abs(x - startX);
 
         for (auto& run : runs) {
             if (run.style & ST_MARKER) continue;
@@ -962,6 +975,52 @@ struct NotesTextField : ui::TextField {
         markEdit();
         touchInteraction();
         pendingUndoPush = true;
+    }
+
+    // If cursor is inside a span of <styleBit>, return the index just past the
+    // closing marker; otherwise -1. Used to implement "toggle off = exit span"
+    // so pressing Cmd+B a second time jumps past the closing ** instead of
+    // stacking another pair into the middle of the existing span.
+    int findSpanEndAt(int p, uint8_t styleBit) {
+        int n = (int)text.size();
+        if (p < 0 || p > n) return -1;
+        uint8_t rightS = (p < n) ? styleAt(p) : 0;
+        if (!(rightS & styleBit)) return -1;
+        int j = p;
+        while (j < n && (styleAt(j) & styleBit) && !(styleAt(j) & ST_MARKER)) j++;
+        while (j < n && (styleAt(j) & styleBit) &&  (styleAt(j) & ST_MARKER)) j++;
+        return j;
+    }
+
+    // Smart toggle: if no selection and cursor is in the content of a span of
+    // this style, jump past the closing marker ("toggle off"). Otherwise wrap.
+    void toggleMark(const std::string& marker, uint8_t styleBit) {
+        if (cursor == selection) {
+            uint8_t leftS  = (cursor > 0)                  ? styleAt(cursor - 1) : 0;
+            uint8_t rightS = (cursor < (int)text.size())   ? styleAt(cursor)     : 0;
+            bool insideContent = (leftS & styleBit) && (rightS & styleBit)
+                              && !(leftS & ST_MARKER) && !(rightS & ST_MARKER);
+            if (insideContent) {
+                int endPos = findSpanEndAt(cursor, styleBit);
+                if (endPos >= 0) {
+                    cursor = endPos;
+                    selection = endPos;
+                    invalidateRows();
+                    ensureCaretVisible();
+                    preferredX = -1.f;
+                    return;
+                }
+            }
+            // Cursor sits on a marker char (between two spans). Jump past it so
+            // typing lands outside, rather than inserting a second pair.
+            if ((leftS & styleBit) && (leftS & ST_MARKER)
+                && !(rightS & styleBit)) {
+                // We're at the end of a span — just insert empty markers after.
+                wrapSelection(marker, marker);
+                return;
+            }
+        }
+        wrapSelection(marker, marker);
     }
 
     // Change heading level of the line containing cursor.
@@ -1294,9 +1353,9 @@ struct NotesTextField : ui::TextField {
             if (cmd && !alt && e.key == GLFW_KEY_Y) { redo(); e.consume(this); return; }
 
             // Formatting
-            if (cmd && !alt && !shift && e.key == GLFW_KEY_B) { wrapSelection("**", "**"); e.consume(this); return; }
-            if (cmd && !alt && !shift && e.key == GLFW_KEY_I) { wrapSelection("_", "_"); e.consume(this); return; }
-            if (cmd && !alt && !shift && e.key == GLFW_KEY_E) { wrapSelection("`", "`"); e.consume(this); return; }
+            if (cmd && !alt && !shift && e.key == GLFW_KEY_B) { toggleMark("**", ST_BOLD);   e.consume(this); return; }
+            if (cmd && !alt && !shift && e.key == GLFW_KEY_I) { toggleMark("_",  ST_ITALIC); e.consume(this); return; }
+            if (cmd && !alt && !shift && e.key == GLFW_KEY_E) { toggleMark("`",  ST_CODE);   e.consume(this); return; }
 
             // Heading size: Cmd+Shift+] = bigger, Cmd+Shift+[ = smaller
             if (cmd && shift && e.key == GLFW_KEY_RIGHT_BRACKET) { changeHeading(+1); e.consume(this); return; }
@@ -1431,6 +1490,36 @@ struct NotesTextField : ui::TextField {
         else if (c < 0x10000) { buf[n++] = 0xE0 | (c >> 12); buf[n++] = 0x80 | ((c >> 6) & 0x3F); buf[n++] = 0x80 | (c & 0x3F); }
         else { buf[n++] = 0xF0 | (c >> 18); buf[n++] = 0x80 | ((c >> 12) & 0x3F); buf[n++] = 0x80 | ((c >> 6) & 0x3F); buf[n++] = 0x80 | (c & 0x3F); }
         replaceSelection(std::string(buf, n));
+
+        // Auto-advance onto a new line when the user just completed a
+        // horizontal-rule pattern (---, ***, ___) at the start of a line.
+        // Matches the Notion / Google Docs behaviour of "finish the rule,
+        // drop me onto the next line to keep typing".
+        if (!singleLine && n == 1 && (buf[0] == '-' || buf[0] == '*' || buf[0] == '_')) {
+            char ch = buf[0];
+            int ls = lineStartIndex(text, cursor);
+            // Strip any leading whitespace on the line, same as the parser.
+            int lineContentStart = ls;
+            while (lineContentStart < (int)text.size()
+                   && (text[lineContentStart] == ' ' || text[lineContentStart] == '\t'))
+                lineContentStart++;
+            bool eol = (cursor == (int)text.size() || text[cursor] == '\n');
+            if (eol
+                && cursor - lineContentStart == 3
+                && text[lineContentStart    ] == ch
+                && text[lineContentStart + 1] == ch
+                && text[lineContentStart + 2] == ch) {
+                text.insert(cursor, "\n");
+                cursor++;
+                selection = cursor;
+                invalidateRows();
+                writeBack();
+                markEdit();
+                touchInteraction();
+                ensureCaretVisible();
+            }
+        }
+
         markEdit();
         preferredX = -1.f;
         e.consume(this);
@@ -1663,7 +1752,7 @@ struct NotesResizeHandle : widget::OpaqueWidget {
 struct NotesWidget : ModuleWidget {
     NotesBackground* bg = nullptr;
     app::PanelBorder* border = nullptr;
-    NotesTextField* field = nullptr;
+    JournalEditor* field = nullptr;
     NotesTextField* titleField = nullptr;
     NotesResizeHandle* handle = nullptr;
     NotesLogo* logo = nullptr;
@@ -1712,10 +1801,17 @@ struct NotesWidget : ModuleWidget {
         if (module) titleField->text = module->title;
         addChild(titleField);
 
-        field = new NotesTextField;
+        field = new JournalEditor;
         field->nm = module;
-        field->placeholder = "type...";
-        if (module) field->text = module->text;
+        field->placeholder = "type…";
+        if (module) field->setMarkdown(module->text);
+        // On any edit, push the rendered markdown back into the module so
+        // the patch serialises correctly.
+        if (module) {
+            field->onChange = [this, module]() {
+                if (field) module->text = field->getMarkdown();
+            };
+        }
         addChild(field);
 
         logo = new NotesLogo;
@@ -1780,7 +1876,9 @@ struct NotesWidget : ModuleWidget {
         menu->addChild(new ui::MenuSeparator);
         menu->addChild(createMenuLabel("Lux Cache Notes"));
 
-        menu->addChild(createBoolPtrMenuItem("Raw mode (show markers)", "", &m->rawMode));
+        menu->addChild(createMenuItem("Insert horizontal line", "", [this]() {
+            if (field) { APP->event->setSelectedWidget(field); field->cmdInsertHR(); }
+        }));
 
         menu->addChild(createMenuItem("Export as Markdown (.md)", "", [m]() {
             std::string def = (!m->title.empty() ? m->title : std::string("journal")) + ".md";
@@ -1829,9 +1927,7 @@ struct NotesWidget : ModuleWidget {
         menu->addChild(new ui::MenuSeparator);
 
         menu->addChild(createMenuItem("Clear text", "", [m, this]() {
-            if (field) { field->pushUndo(true); field->text.clear();
-                         field->cursor = field->selection = 0;
-                         field->invalidateRows(); field->writeBack(); }
+            if (field) field->setMarkdown("");
             m->text = "";
         }));
         menu->addChild(createBoolPtrMenuItem("Hide logo", "", &m->hideLogo));
