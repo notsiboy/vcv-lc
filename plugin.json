@@ -1,0 +1,29 @@
+{
+  "slug": "LuxCache",
+  "name": "Lux Cache",
+  "version": "2.0.0",
+  "license": "proprietary",
+  "brand": "Lux Cache",
+  "author": "Lux Cache",
+  "authorEmail": "",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "Notes",
+      "name": "Notes",
+      "description": "Resizable notes canvas with smart text editing, markdown formatting, headings, lists, and exports.",
+      "tags": ["Utility", "Visual"]
+    },
+    {
+      "slug": "Tidy",
+      "name": "Tidy",
+      "description": "Selectively hide or fade individual modules and cables without changing global cable opacity.",
+      "tags": ["Utility", "Visual"]
+    }
+  ]
+}
