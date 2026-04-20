@@ -1,33 +1,35 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
-// jump — saved-view bookmarks + fuzzy module finder for the rack.
+// jump — 9 saved-view bookmarks driven by one clickable dot.
 //
-// • 9 named slots, each a captured (gridOffset, zoom) pair.
-// • Chord or overlay hotkey mode — toggle in right-click menu.
-// • Back/forward navigation stack (Cmd+[ / Cmd+]).
-// • Pulse-on-arrival highlight.
-// • Fuzzy-search over every module in the rack.
+//   Not armed: Cmd+1..9 jumps to slot.
+//   Armed   : Cmd+1..9 saves current view into slot.  (arm by clicking the dot)
+//   Cmd+[ / Cmd+]: navigation history (back / forward).
+//
+// Saved view = the rack-space rectangle that was visible in the viewport,
+// restored via rackScroll->zoomToBound so zoom + offset are set atomically.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <array>
 #include <rack.hpp>
 #include <string>
-#include <vector>
 
 using namespace rack;
 
 namespace jump {
 
+// Saved-view format: the viewport rectangle in module (rack-space) coords.
+// Restored via rackScroll->zoomToBound with a padding-compensated rect —
+// zoomToBound reliably survives Rack's step() logic (direct offset writes
+// don't), and the padding is a fixed ratio we can pre-compensate for.
 struct Slot {
     bool        occupied = false;
-    math::Vec   gridOffset;     // top-left of the scroll viewport, in grid units
-    float       zoom     = 1.f;
-    std::string name;           // short label, optional
+    math::Rect  rackRect;     // viewport bounds in rack-space (at 1x zoom)
+    std::string name;
 };
 
 struct View {
-    math::Vec gridOffset;
-    float     zoom = 1.f;
+    math::Rect rackRect;
 };
 
 } // namespace jump
@@ -38,14 +40,7 @@ struct JumpModule : Module {
     static constexpr int N_SLOTS = 9;
     std::array<jump::Slot, N_SLOTS> slots;
 
-    enum InputMode : int {
-        MODE_CHORD   = 0,   // Cmd+J  1..9 directly / Cmd+J /  for find
-        MODE_OVERLAY = 1,   // Cmd+J opens a Raycast-style modal
-    };
-    int inputMode = MODE_CHORD;
-
     JumpModule();
-
     json_t* dataToJson() override;
     void    dataFromJson(json_t* root) override;
 };
