@@ -50,6 +50,19 @@ Auto-triggered one-shot recorder. Listens for signal, captures the take, writes 
 - Filenames auto-increment: `<prefix><NN>.wav`
 - Written asynchronously on a background thread so the audio thread never touches disk
 
+### take
+
+![take module](docs/take.png)
+
+Session-aware retrospective recorder. Pairs with `grab` as its opposite — `grab` starts recording when audio arrives; `take` is always quietly rolling a ring buffer of the last N seconds, so you can capture something *after* the fact. Solves the "that thing I played 30 seconds ago was perfect" problem.
+
+- Stereo continuous ring buffer, 60 s default (adjustable 10–300 s in right-click)
+- One panel button — click to freeze the last N seconds to WAV
+- Voice-memos style vertical waveform on the panel: newest audio at the top, scrolls down, centred silhouette of the stereo peak
+- Auto-named `<prefix><NN>.wav` files, asynchronous writer thread so the audio path never touches disk
+- Right-click: buffer length, fade in/out, normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory + picker, reveal folder
+- 4 HP
+
 ### jump (experimental)
 
 ![jump module](docs/jump.png)
