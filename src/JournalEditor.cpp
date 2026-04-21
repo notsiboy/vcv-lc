@@ -355,9 +355,10 @@ void JournalEditor::draw(const DrawArgs& args) {
                     nvgText(args.vg, x + dx, y, b.text.c_str() + run.start, b.text.c_str() + run.end);
                 }
             };
-            bool forceHeadingBold = (b.type == journal::BLOCK_HEADING);
+            // Headings render at normal weight by default; size alone carries
+            // the hierarchy. Users can still cmd+B any span (heading or body).
             drawGlyph(0.f);
-            if ((run.marks & journal::MARK_BOLD) || forceHeadingBold) drawGlyph(0.5f);
+            if (run.marks & journal::MARK_BOLD) drawGlyph(0.5f);
 
             x += w;
         }

@@ -1676,9 +1676,10 @@ struct NotesLogo : widget::Widget {
     NotesModule* nm = nullptr;
     void draw(const DrawArgs& args) override {
         if (nm && nm->hideLogo) return;
-        bool dark = lc::theme.dark;
-        std::string path = asset::plugin(pluginInstance,
-            dark ? "res/lc-icon-white.png" : "res/lc-icon-new.png");
+        std::string path = lc::logoAsset(
+            asset::plugin(pluginInstance, "res/lc-icon-new.png"),
+            asset::plugin(pluginInstance, "res/lc-icon-white.png"),
+            asset::plugin(pluginInstance, "res/lc-icon-grey.png"));
         std::shared_ptr<window::Image> img = APP->window->loadImage(path);
         if (!img || img->handle < 0) return;
         NVGpaint paint = nvgImagePattern(args.vg, 0, 0, box.size.x, box.size.y, 0, img->handle, 1.f);
