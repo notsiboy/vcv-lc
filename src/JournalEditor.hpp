@@ -48,9 +48,15 @@ struct JournalEditor : widget::OpaqueWidget {
         int   byteEnd;      // exclusive
         float y;
         float height;
-        float leftPad;      // x indent for hanging bullets etc.
+        float leftPad;      // x offset (from textOffset.x) where content starts
         float rowFontSize;
         bool  lastOfBlock;  // true if this row contains block.end
+        // List-marker glyph to draw for this row. Non-empty only on the
+        // first row of a BULLET / ORDERED block; empty elsewhere. Content x
+        // (`leftPad`) already accounts for the marker, so wrapped lines
+        // hang cleanly under the content.
+        std::string markerText;
+        float       markerX = 0.f;   // offset from textOffset.x for the marker
     };
     std::vector<Row> rows;
     bool             rowsDirty = true;

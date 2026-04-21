@@ -99,21 +99,35 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
     float y = textOffset.y;
     float innerW = std::max(8.f, box.size.x - textOffset.x * 2.f);
 
+    // Ordered-list numbering by depth, reset when the sequence breaks.
+    int orderedCounter[9] = {0};
+
     for (int bi = 0; bi < doc.nBlocks(); bi++) {
         const journal::Block& b = doc.at(bi);
 
+        if (b.type != journal::BLOCK_ORDERED)
+            for (int& c : orderedCounter) c = 0;
+
         float baseFS = fontSize;
-        float leftPad = 0.f;
+        float depthPad = 0.f;
+        std::string markerText;
+        float markerW = 0.f;
+        const float INDENT_PX = 14.f;
 
         if (b.type == journal::BLOCK_HEADING) {
             baseFS = fontSize * headingScale(b.meta);
-        } else if (b.type == journal::BLOCK_BULLET || b.type == journal::BLOCK_ORDERED) {
-            // Markers (- / * / + / N.) stay in the block text as the user
-            // typed them; no visual substitution. Indent from Tab is purely
-            // cosmetic — meta * 12 px of extra left margin.
-            leftPad = (float)b.meta * 12.f;
+        } else if (b.type == journal::BLOCK_BULLET) {
+            depthPad = (float)b.meta * INDENT_PX;
+            markerText = "•  ";
+        } else if (b.type == journal::BLOCK_ORDERED) {
+            int d = b.meta > 8 ? 8 : b.meta;
+            for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
+            orderedCounter[d]++;
+            depthPad = (float)d * INDENT_PX;
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%d.  ", orderedCounter[d]);
+            markerText = buf;
         } else if (b.type == journal::BLOCK_HR) {
-            // Fixed height for the rule row.
             Row r; r.blockIdx = bi; r.byteStart = 0; r.byteEnd = 0;
             r.y = y; r.height = baseFS * lineSpacing;
             r.leftPad = 0.f; r.rowFontSize = baseFS; r.lastOfBlock = true;
@@ -121,6 +135,14 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
             y += r.height;
             continue;
         }
+
+        if (!markerText.empty()) {
+            configureFont(vg, 0, baseFS);
+            float bb[4];
+            nvgTextBounds(vg, 0, 0, markerText.c_str(), nullptr, bb);
+            markerW = bb[2] - bb[0];
+        }
+        const float leftPad = depthPad + markerW;
 
         float rowWidth = std::max(8.f, innerW - leftPad);
 
@@ -132,29 +154,33 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
         if (end > start)
             nrows = nvgTextBreakLines(vg, start, end, rowWidth, wrapRows, 256);
 
-        if (nrows == 0) {
+        auto pushRow = [&](int byteStart, int byteEnd, bool last, bool first) {
             Row r;
-            r.blockIdx = bi; r.byteStart = 0; r.byteEnd = 0;
-            r.y = y; r.height = baseFS * lineSpacing;
-            r.leftPad = leftPad;
-            r.rowFontSize = baseFS; r.lastOfBlock = true;
+            r.blockIdx    = bi;
+            r.byteStart   = byteStart;
+            r.byteEnd     = byteEnd;
+            r.y           = y;
+            r.height      = baseFS * lineSpacing;
+            r.leftPad     = leftPad;
+            r.rowFontSize = baseFS;
+            r.lastOfBlock = last;
+            if (first && !markerText.empty()) {
+                r.markerText = markerText;
+                r.markerX    = depthPad;
+            }
             rows.push_back(r);
             y += r.height;
+        };
+
+        if (nrows == 0) {
+            pushRow(0, 0, true, true);
             continue;
         }
-
         for (int ri = 0; ri < nrows; ri++) {
-            Row r;
-            r.blockIdx   = bi;
-            r.byteStart  = (int)(wrapRows[ri].start - start);
-            r.byteEnd    = (int)(wrapRows[ri].end   - start);
-            r.y          = y;
-            r.height     = baseFS * lineSpacing;
-            r.leftPad    = leftPad;
-            r.rowFontSize = baseFS;
-            r.lastOfBlock = (ri == nrows - 1);
-            rows.push_back(r);
-            y += r.height;
+            pushRow((int)(wrapRows[ri].start - start),
+                    (int)(wrapRows[ri].end   - start),
+                    ri == nrows - 1,
+                    ri == 0);
         }
     }
 
@@ -316,10 +342,18 @@ void JournalEditor::draw(const DrawArgs& args) {
                 float xS = xOfPos(args.vg, ps);
                 float xE = xOfPos(args.vg, pe);
                 nvgBeginPath(args.vg);
-                nvgRect(args.vg, xS, y - 1.f, std::max(2.f, xE - xS), r.height + 2.f);
+                nvgRect(args.vg, xS, y, std::max(2.f, xE - xS), r.height);
                 nvgFillColor(args.vg, selColor());
                 nvgFill(args.vg);
             }
+        }
+
+        // List marker — first row of a bullet / ordered block.
+        if (!r.markerText.empty()) {
+            configureFont(args.vg, 0, r.rowFontSize);
+            nvgFillColor(args.vg, fgColor());
+            nvgText(args.vg, textOffset.x + r.markerX, y,
+                    r.markerText.c_str(), nullptr);
         }
 
         float x = textOffset.x + r.leftPad;
@@ -622,9 +656,18 @@ void JournalEditor::onSelectKey(const event::SelectKey& e) {
             cmdSplitBlock();
             break;
 
-        case GLFW_KEY_TAB:
-            cmdIndentList(shift ? -1 : +1);
+        case GLFW_KEY_TAB: {
+            const journal::Block& cur = doc.at(sel.head.block);
+            bool inList = (cur.type == journal::BLOCK_BULLET
+                        || cur.type == journal::BLOCK_ORDERED);
+            if (inList) {
+                cmdIndentList(shift ? -1 : +1);
+                break;
+            }
+            if (shift) return;          // let Rack's focus-prev handle it
+            cmdInsertText("\t");        // plain Tab in non-list → literal tab
             break;
+        }
 
         default:
             return;
@@ -896,20 +939,24 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
             return true;
         }
 
-        // Bullet: "-", "*", "+"  — only tag the block so Enter auto-continues
-        // and Tab indents. Leave the literal "- " (or "* " / "+ ") visible in
-        // the text; no substitution.
+        // Bullet: "-", "*", "+"  — strip the typed marker. It's rendered
+        // from structure (block type + depth), not stored in text.
         if (beforeSpace.size() == 1
             && (beforeSpace[0] == '-' || beforeSpace[0] == '*' || beforeSpace[0] == '+')) {
             pushUndo(EditKind::OTHER);
             b.type = journal::BLOCK_BULLET;
             b.meta = 0;
+            int stripLen = p.offset;               // "- " (or "* "/"+ ")
+            b.text.erase(0, stripLen);
+            b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
+            sel = journal::Selection::caret({p.block, 0});
             invalidateRows();
             markChanged();
             return true;
         }
 
-        // Ordered: "1.", "42.", etc. Same idea — keep the "1. " text as typed.
+        // Ordered: "1. ", "42. ", etc. Same strip-the-marker approach; the
+        // display number is auto-derived at render time.
         if (beforeSpace.size() >= 2 && beforeSpace.back() == '.') {
             bool allDigits = true;
             for (size_t i = 0; i + 1 < beforeSpace.size(); i++) {
@@ -919,6 +966,10 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
                 pushUndo(EditKind::OTHER);
                 b.type = journal::BLOCK_ORDERED;
                 b.meta = 0;
+                int stripLen = p.offset;           // digits + "." + " "
+                b.text.erase(0, stripLen);
+                b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
+                sel = journal::Selection::caret({p.block, 0});
                 invalidateRows();
                 markChanged();
                 return true;
