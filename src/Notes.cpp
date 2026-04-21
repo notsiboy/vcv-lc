@@ -1799,7 +1799,7 @@ struct NotesWidget : ModuleWidget {
 
         field = new JournalEditor;
         field->nm = module;
-        field->placeholder = "type…";
+        field->placeholder = "type here";
         if (module) field->setMarkdown(module->text);
         // On any edit, push the rendered markdown back into the module so
         // the patch serialises correctly.

@@ -56,6 +56,16 @@ static int wordBoundaryRight(const std::string& s, int i) {
     return i;
 }
 
+// Right edge of the word containing `i` — unlike wordBoundaryRight this
+// trims off the trailing non-word run so a word select doesn't include the
+// space after it.
+static int wordEndAt(const std::string& s, int i) {
+    int r = wordBoundaryRight(s, i);
+    while (r > i && r > 0 && !isWordChar(s, r - 1))
+        r = journal::utf8Prev(s, r);
+    return r;
+}
+
 // ─── JournalEditor ──────────────────────────────────────────────────────────
 
 JournalEditor::JournalEditor() {
@@ -99,21 +109,39 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
     float y = textOffset.y;
     float innerW = std::max(8.f, box.size.x - textOffset.x * 2.f);
 
+    // Ordered-list numbering by depth, reset when the sequence breaks.
+    int orderedCounter[9] = {0};
+
     for (int bi = 0; bi < doc.nBlocks(); bi++) {
         const journal::Block& b = doc.at(bi);
 
+        if (b.type != journal::BLOCK_ORDERED)
+            for (int& c : orderedCounter) c = 0;
+
         float baseFS = fontSize;
-        float leftPad = 0.f;
+        float depthPad = 0.f;
+        std::string markerText;
+        float markerW = 0.f;
+        const float INDENT_PX = 14.f;
 
         if (b.type == journal::BLOCK_HEADING) {
             baseFS = fontSize * headingScale(b.meta);
-        } else if (b.type == journal::BLOCK_BULLET || b.type == journal::BLOCK_ORDERED) {
-            // Markers (- / * / + / N.) stay in the block text as the user
-            // typed them; no visual substitution. Indent from Tab is purely
-            // cosmetic — meta * 12 px of extra left margin.
-            leftPad = (float)b.meta * 12.f;
+        } else if (b.type == journal::BLOCK_BULLET) {
+            int d    = journal::blockDepth(b.meta);
+            int kind = journal::bulletKind(b.meta);
+            if (kind < 0 || kind >= journal::BULLET_MARKER_COUNT) kind = 0;
+            depthPad = (float)d * INDENT_PX;
+            markerText = std::string(journal::BULLET_MARKERS[kind]) + "  ";
+        } else if (b.type == journal::BLOCK_ORDERED) {
+            int d = journal::blockDepth(b.meta);
+            if (d > 8) d = 8;
+            for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
+            orderedCounter[d]++;
+            depthPad = (float)d * INDENT_PX;
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%d.  ", orderedCounter[d]);
+            markerText = buf;
         } else if (b.type == journal::BLOCK_HR) {
-            // Fixed height for the rule row.
             Row r; r.blockIdx = bi; r.byteStart = 0; r.byteEnd = 0;
             r.y = y; r.height = baseFS * lineSpacing;
             r.leftPad = 0.f; r.rowFontSize = baseFS; r.lastOfBlock = true;
@@ -121,6 +149,14 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
             y += r.height;
             continue;
         }
+
+        if (!markerText.empty()) {
+            configureFont(vg, 0, baseFS);
+            float bb[4];
+            nvgTextBounds(vg, 0, 0, markerText.c_str(), nullptr, bb);
+            markerW = bb[2] - bb[0];
+        }
+        const float leftPad = depthPad + markerW;
 
         float rowWidth = std::max(8.f, innerW - leftPad);
 
@@ -132,29 +168,33 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
         if (end > start)
             nrows = nvgTextBreakLines(vg, start, end, rowWidth, wrapRows, 256);
 
-        if (nrows == 0) {
+        auto pushRow = [&](int byteStart, int byteEnd, bool last, bool first) {
             Row r;
-            r.blockIdx = bi; r.byteStart = 0; r.byteEnd = 0;
-            r.y = y; r.height = baseFS * lineSpacing;
-            r.leftPad = leftPad;
-            r.rowFontSize = baseFS; r.lastOfBlock = true;
+            r.blockIdx    = bi;
+            r.byteStart   = byteStart;
+            r.byteEnd     = byteEnd;
+            r.y           = y;
+            r.height      = baseFS * lineSpacing;
+            r.leftPad     = leftPad;
+            r.rowFontSize = baseFS;
+            r.lastOfBlock = last;
+            if (first && !markerText.empty()) {
+                r.markerText = markerText;
+                r.markerX    = depthPad;
+            }
             rows.push_back(r);
             y += r.height;
+        };
+
+        if (nrows == 0) {
+            pushRow(0, 0, true, true);
             continue;
         }
-
         for (int ri = 0; ri < nrows; ri++) {
-            Row r;
-            r.blockIdx   = bi;
-            r.byteStart  = (int)(wrapRows[ri].start - start);
-            r.byteEnd    = (int)(wrapRows[ri].end   - start);
-            r.y          = y;
-            r.height     = baseFS * lineSpacing;
-            r.leftPad    = leftPad;
-            r.rowFontSize = baseFS;
-            r.lastOfBlock = (ri == nrows - 1);
-            rows.push_back(r);
-            y += r.height;
+            pushRow((int)(wrapRows[ri].start - start),
+                    (int)(wrapRows[ri].end   - start),
+                    ri == nrows - 1,
+                    ri == 0);
         }
     }
 
@@ -316,10 +356,18 @@ void JournalEditor::draw(const DrawArgs& args) {
                 float xS = xOfPos(args.vg, ps);
                 float xE = xOfPos(args.vg, pe);
                 nvgBeginPath(args.vg);
-                nvgRect(args.vg, xS, y - 1.f, std::max(2.f, xE - xS), r.height + 2.f);
+                nvgRect(args.vg, xS, y, std::max(2.f, xE - xS), r.height);
                 nvgFillColor(args.vg, selColor());
                 nvgFill(args.vg);
             }
+        }
+
+        // List marker — first row of a bullet / ordered block.
+        if (!r.markerText.empty()) {
+            configureFont(args.vg, 0, r.rowFontSize);
+            nvgFillColor(args.vg, fgColor());
+            nvgText(args.vg, textOffset.x + r.markerX, y,
+                    r.markerText.c_str(), nullptr);
         }
 
         float x = textOffset.x + r.leftPad;
@@ -420,30 +468,44 @@ void JournalEditor::onButton(const event::Button& e) {
         lastClickPos = e.pos;
 
         if (hasShift(e.mods)) {
+            // Shift-click extends the existing selection; keep the current
+            // dragMode so shift-drag behaves consistently.
             sel.head = p;
         } else if (clickStreak >= 3) {
-            // Triple-click: select whole block.
-            sel.anchor = {p.block, 0};
-            sel.head   = {p.block, doc.at(p.block).length()};
+            // Triple-click: whole block. Pivot is the block bounds — drag
+            // snaps selection to whole blocks.
+            pivotFrom = {p.block, 0};
+            pivotTo   = {p.block, doc.at(p.block).length()};
+            sel.anchor = pivotFrom;
+            sel.head   = pivotTo;
+            dragMode = DragMode::BLOCK;
         } else if (clickStreak == 2) {
-            // Double-click: select word at click.
+            // Double-click: select word at click. Pivot is that word — drag
+            // snaps selection to word boundaries.
             const journal::Block& b = doc.at(p.block);
-            int a = wordBoundaryLeft(b.text, p.offset);
-            int bEnd = wordBoundaryRight(b.text, p.offset);
-            // wordBoundaryRight actually advances past trailing non-word chars;
-            // trim that back so we select just the word itself.
-            while (bEnd > p.offset && bEnd > 0 && !isWordChar(b.text, bEnd - 1))
-                bEnd = journal::utf8Prev(b.text, bEnd);
-            sel.anchor = {p.block, a};
-            sel.head   = {p.block, bEnd};
+            int wStart = wordBoundaryLeft(b.text, p.offset);
+            int wEnd   = wordEndAt(b.text, p.offset);
+            pivotFrom = {p.block, wStart};
+            pivotTo   = {p.block, wEnd};
+            sel.anchor = pivotFrom;
+            sel.head   = pivotTo;
+            dragMode = DragMode::WORD;
         } else {
             sel = journal::Selection::caret(p);
+            pivotFrom = pivotTo = p;
+            dragMode = DragMode::CARET;
         }
         hasPendingMarks = false;
         preferredX = -1.f;
         lastCursorT = rack::system::getTime();
         e.consume(this);
     }
+}
+
+// Order two Pos values — returns true if a comes strictly before b.
+static bool posLess(const journal::Pos& a, const journal::Pos& b) {
+    if (a.block != b.block) return a.block < b.block;
+    return a.offset < b.offset;
 }
 
 void JournalEditor::onDragHover(const event::DragHover& e) {
@@ -453,7 +515,53 @@ void JournalEditor::onDragHover(const event::DragHover& e) {
     NVGcontext* vg = APP->window->vg;
     if (rowsDirty) rebuildRows(vg);
     journal::Pos p = posFromLocal(vg, e.pos);
-    sel.head = doc.clampPos(p);
+    p = doc.clampPos(p);
+
+    // Moving far from the original press invalidates the click streak so
+    // a click after this drag isn't misread as a double / triple.
+    if (e.pos.minus(lastClickPos).norm() > 8.f) lastClickT = -1.0;
+
+    switch (dragMode) {
+        case DragMode::CARET:
+            sel.head = p;
+            break;
+
+        case DragMode::WORD: {
+            const journal::Block& b = doc.at(p.block);
+            int wStart = wordBoundaryLeft(b.text, p.offset);
+            int wEnd   = wordEndAt(b.text, p.offset);
+            journal::Pos pw_start{p.block, wStart};
+            journal::Pos pw_end  {p.block, wEnd};
+            if (posLess(p, pivotFrom)) {
+                // Pointer is left of pivot → anchor = pivot end, head = word start.
+                sel.anchor = pivotTo;
+                sel.head   = pw_start;
+            } else if (posLess(pivotTo, p)) {
+                sel.anchor = pivotFrom;
+                sel.head   = pw_end;
+            } else {
+                sel.anchor = pivotFrom;
+                sel.head   = pivotTo;
+            }
+            break;
+        }
+
+        case DragMode::BLOCK: {
+            int b = p.block;
+            if (b < pivotFrom.block) {
+                sel.anchor = pivotTo;
+                sel.head   = {b, 0};
+            } else if (b > pivotTo.block) {
+                sel.anchor = pivotFrom;
+                sel.head   = {b, doc.at(b).length()};
+            } else {
+                sel.anchor = pivotFrom;
+                sel.head   = pivotTo;
+            }
+            break;
+        }
+    }
+
     hasPendingMarks = false;
     preferredX = -1.f;
     lastCursorT = rack::system::getTime();
@@ -622,9 +730,18 @@ void JournalEditor::onSelectKey(const event::SelectKey& e) {
             cmdSplitBlock();
             break;
 
-        case GLFW_KEY_TAB:
-            cmdIndentList(shift ? -1 : +1);
+        case GLFW_KEY_TAB: {
+            const journal::Block& cur = doc.at(sel.head.block);
+            bool inList = (cur.type == journal::BLOCK_BULLET
+                        || cur.type == journal::BLOCK_ORDERED);
+            if (inList) {
+                cmdIndentList(shift ? -1 : +1);
+                break;
+            }
+            if (shift) return;          // let Rack's focus-prev handle it
+            cmdInsertText("\t");        // plain Tab in non-list → literal tab
             break;
+        }
 
         default:
             return;
@@ -896,20 +1013,31 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
             return true;
         }
 
-        // Bullet: "-", "*", "+"  — only tag the block so Enter auto-continues
-        // and Tab indents. Leave the literal "- " (or "* " / "+ ") visible in
-        // the text; no substitution.
-        if (beforeSpace.size() == 1
-            && (beforeSpace[0] == '-' || beforeSpace[0] == '*' || beforeSpace[0] == '+')) {
-            pushUndo(EditKind::OTHER);
-            b.type = journal::BLOCK_BULLET;
-            b.meta = 0;
-            invalidateRows();
-            markChanged();
-            return true;
+        // Bullet triggers — any of the six recognised markers. The typed
+        // marker is stripped from text and remembered via the meta "kind"
+        // nibble so render + markdown round-trip preserve what the user
+        // typed (`-`, `*`, `+`, `→`, `—`, `–`).
+        //
+        // New lists auto-indent to depth 1 for visual breathing room; the
+        // user can Shift+Tab once to bring the list flush with the margin,
+        // and a second Shift+Tab exits the list entirely.
+        for (int k = 0; k < journal::BULLET_MARKER_COUNT; k++) {
+            if (beforeSpace == journal::BULLET_MARKERS[k]) {
+                pushUndo(EditKind::OTHER);
+                b.type = journal::BLOCK_BULLET;
+                b.meta = journal::makeBulletMeta(1, k);
+                int stripLen = p.offset;    // marker bytes + the space
+                b.text.erase(0, stripLen);
+                b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
+                sel = journal::Selection::caret({p.block, 0});
+                invalidateRows();
+                markChanged();
+                return true;
+            }
         }
 
-        // Ordered: "1.", "42.", etc. Same idea — keep the "1. " text as typed.
+        // Ordered: "1. ", "42. ", etc. Same strip-the-marker approach; the
+        // display number is auto-derived at render time.
         if (beforeSpace.size() >= 2 && beforeSpace.back() == '.') {
             bool allDigits = true;
             for (size_t i = 0; i + 1 < beforeSpace.size(); i++) {
@@ -918,7 +1046,11 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
             if (allDigits) {
                 pushUndo(EditKind::OTHER);
                 b.type = journal::BLOCK_ORDERED;
-                b.meta = 0;
+                b.meta = 1;        // auto-indent one level, same as bullet
+                int stripLen = p.offset;           // digits + "." + " "
+                b.text.erase(0, stripLen);
+                b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
+                sel = journal::Selection::caret({p.block, 0});
                 invalidateRows();
                 markChanged();
                 return true;

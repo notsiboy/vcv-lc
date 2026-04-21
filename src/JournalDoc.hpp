@@ -43,10 +43,30 @@ enum Mark : uint8_t {
 enum BlockType : uint8_t {
     BLOCK_PARAGRAPH = 0,
     BLOCK_HEADING   = 1,  // meta = 1..6
-    BLOCK_BULLET    = 2,  // meta = indent level (0..N)
-    BLOCK_ORDERED   = 3,  // meta = indent level
+    // For BULLET, meta packs two values:
+    //   low nibble  = indent depth 0..8
+    //   high nibble = marker kind (see bulletMarker() table below)
+    BLOCK_BULLET    = 2,
+    BLOCK_ORDERED   = 3,  // meta = indent depth
     BLOCK_HR        = 4,  // empty; the caret cannot land inside
 };
+
+// Meta helpers — keep list indent + marker kind packed in one uint8_t so the
+// Block struct stays unchanged.
+inline int     blockDepth(uint8_t m)    { return m & 0x0F; }
+inline int     bulletKind(uint8_t m)    { return (m >> 4) & 0x0F; }
+inline uint8_t makeBulletMeta(int depth, int kind) {
+    return (uint8_t)(((kind & 0x0F) << 4) | (depth & 0x0F));
+}
+
+// The full set of bullet markers we recognise as triggers, render, and
+// round-trip through markdown. Order is the `kind` index encoded in meta.
+// Stored / emitted literal is what the user typed — no normalisation.
+static const char* const BULLET_MARKERS[] = {
+    "-", "*", "+", "\xE2\x86\x92", "\xE2\x80\x94", "\xE2\x80\x93"
+    //                ↑ →               ↑ —             ↑ –
+};
+static constexpr int BULLET_MARKER_COUNT = 6;
 
 struct Block {
     BlockType            type = BLOCK_PARAGRAPH;

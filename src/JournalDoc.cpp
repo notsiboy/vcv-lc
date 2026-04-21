@@ -241,39 +241,14 @@ void deleteForward(Doc& doc, Selection& sel) {
 }
 
 // ─── splitBlock (Enter) ─────────────────────────────────────────────────────
-
-namespace {
-
-// Returns the byte length of a leading list marker, including any leading
-// whitespace, the bullet / digit, and the trailing space. Zero if not a list.
-int listPrefixLen(const std::string& s) {
-    int i = 0, n = (int)s.size();
-    while (i < n && (s[i] == ' ' || s[i] == '\t')) i++;
-    if (i >= n) return 0;
-    if ((s[i] == '-' || s[i] == '*' || s[i] == '+')
-        && i + 1 < n && s[i + 1] == ' ')
-        return i + 2;
-    int j = i;
-    while (j < n && std::isdigit((unsigned char)s[j])) j++;
-    if (j > i && j + 1 < n && s[j] == '.' && s[j + 1] == ' ')
-        return j + 2;
-    return 0;
-}
-
-// Given a marker like "1. " or "  42. " returns the next-incremented marker,
-// e.g. "2. " / "  43. ". Leaves bullet markers untouched.
-std::string incrementOrderedMarker(const std::string& m) {
-    size_t a = 0;
-    while (a < m.size() && (m[a] == ' ' || m[a] == '\t')) a++;
-    size_t b = a;
-    while (b < m.size() && std::isdigit((unsigned char)m[b])) b++;
-    if (b == a) return m;
-    int n = std::atoi(m.substr(a, b - a).c_str());
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", n + 1);
-    return m.substr(0, a) + buf + m.substr(b);
-}
-
-} // namespace
+//
+// ProseMirror model: lists are a block type + depth (meta). The marker
+// ("- ", "1. ", "•") is rendered from structure, never stored as text. So
+// Enter semantics collapse to:
+//
+//   empty list item      → outdent one level; at level 0 → paragraph
+//   otherwise            → split at caret; new block inherits type + depth
+//   heading              → new block is always paragraph
 
 void splitBlock(Doc& doc, Selection& sel) {
     if (!sel.isCollapsed()) {
@@ -285,37 +260,18 @@ void splitBlock(Doc& doc, Selection& sel) {
     BlockType srcType = src.type;
     uint8_t   srcMeta = src.meta;
 
-    // Empty list item → outdent, or exit list if already at level 0.
-    if (srcType == BLOCK_BULLET || srcType == BLOCK_ORDERED) {
-        int pfx = listPrefixLen(src.text);
-        if (pfx > 0 && pfx == src.length()) {
-            if (srcMeta > 0) {
-                src.meta = srcMeta - 1;
-            } else {
-                src.text.clear();
-                src.marks.clear();
-                src.type = BLOCK_PARAGRAPH;
-                src.meta = 0;
-                sel = Selection::caret({p.block, 0});
-            }
-            return;
+    if ((srcType == BLOCK_BULLET || srcType == BLOCK_ORDERED) && src.length() == 0) {
+        if (srcMeta > 0) {
+            src.meta = srcMeta - 1;
+        } else {
+            src.type = BLOCK_PARAGRAPH;
+            src.meta = 0;
         }
-    }
-
-    // Compute the continuation marker BEFORE the split mutates src.text.
-    std::string continuationMarker;
-    if (srcType == BLOCK_BULLET || srcType == BLOCK_ORDERED) {
-        int pfx = listPrefixLen(src.text);
-        if (pfx > 0 && p.offset >= pfx) {
-            continuationMarker = src.text.substr(0, pfx);
-            if (srcType == BLOCK_ORDERED)
-                continuationMarker = incrementOrderedMarker(continuationMarker);
-        }
+        sel = Selection::caret({p.block, 0});
+        return;
     }
 
     Block& next = splitBlockAt(doc, p.block, p.offset);
-
-    // Type/meta on the new block.
     if (srcType == BLOCK_HEADING) {
         next.type = BLOCK_PARAGRAPH;
         next.meta = 0;
@@ -323,15 +279,7 @@ void splitBlock(Doc& doc, Selection& sel) {
         next.type = srcType;
         next.meta = srcMeta;
     }
-
-    int caretOffset = 0;
-    if (!continuationMarker.empty()) {
-        next.text .insert(0, continuationMarker);
-        next.marks.insert(next.marks.begin(), continuationMarker.size(), MARK_NONE);
-        caretOffset = (int)continuationMarker.size();
-    }
-
-    sel = Selection::caret({p.block + 1, caretOffset});
+    sel = Selection::caret({p.block + 1, 0});
 }
 
 // ─── Marks ──────────────────────────────────────────────────────────────────
@@ -406,10 +354,16 @@ void indentList(Doc& doc, const Selection& sel, int delta) {
     for (int bi = from; bi <= to && bi < doc.nBlocks(); bi++) {
         Block& b = doc.at(bi);
         if (b.type != BLOCK_BULLET && b.type != BLOCK_ORDERED) continue;
-        int m = (int)b.meta + delta;
-        if (m < 0) m = 0;
-        if (m > 8) m = 8;
-        b.meta = (uint8_t)m;
+        int depth = blockDepth(b.meta) + delta;
+        if (depth < 0) {
+            // Shift+Tab past level 0 exits the list (→ paragraph).
+            b.type = BLOCK_PARAGRAPH;
+            b.meta = 0;
+        } else {
+            if (depth > 8) depth = 8;
+            // Preserve the marker-kind bits (only meaningful for bullets).
+            b.meta = (uint8_t)((b.meta & 0xF0) | (depth & 0x0F));
+        }
     }
 }
 
@@ -485,8 +439,18 @@ void emitInline(const Block& b, std::string& out) {
 
 std::string toMarkdown(const Doc& doc) {
     std::string out;
+    // Ordered-list counter per nesting depth, reset whenever the contiguous
+    // run of ordered items breaks (any non-ORDERED block, or the depth shifts
+    // in a way that resets a deeper counter).
+    int orderedCounter[9] = {0};
+
     for (int i = 0; i < doc.nBlocks(); i++) {
         const Block& b = doc.at(i);
+
+        if (b.type != BLOCK_ORDERED) {
+            for (int& c : orderedCounter) c = 0;
+        }
+
         switch (b.type) {
             case BLOCK_HEADING: {
                 int lvl = b.meta < 1 ? 1 : (b.meta > 6 ? 6 : b.meta);
@@ -495,11 +459,25 @@ std::string toMarkdown(const Doc& doc) {
                 emitInline(b, out);
                 break;
             }
-            case BLOCK_BULLET:
+            case BLOCK_BULLET: {
+                int d    = blockDepth(b.meta);
+                int kind = bulletKind(b.meta);
+                if (kind < 0 || kind >= BULLET_MARKER_COUNT) kind = 0;
+                out.append(d * 2, ' ');
+                out.append(BULLET_MARKERS[kind]);
+                out.push_back(' ');
+                emitInline(b, out);
+                break;
+            }
             case BLOCK_ORDERED: {
-                // The list marker ("- " / "42. " etc.) lives in block.text as
-                // the user typed it — just emit indent + the block content.
-                out.append(b.meta * 2, ' ');
+                int d = blockDepth(b.meta);
+                if (d > 8) d = 8;
+                for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
+                orderedCounter[d]++;
+                out.append(d * 2, ' ');
+                char buf[16];
+                std::snprintf(buf, sizeof(buf), "%d. ", orderedCounter[d]);
+                out.append(buf);
                 emitInline(b, out);
                 break;
             }
@@ -655,26 +633,40 @@ Doc fromMarkdown(const std::string& md) {
             }
         }
 
-        // Bullet list: -, *, +  — keep the marker in the block text.
-        if (body.size() >= 2 && (body[0] == '-' || body[0] == '*' || body[0] == '+')
-            && body[1] == ' ') {
-            b.type = BLOCK_BULLET;
-            b.meta = (uint8_t)std::min(8, indentSpaces / 2);
-            parseInlineInto(body, b);
-            doc.blocks.push_back(std::move(b));
-            if (nl == std::string::npos) break;
-            start = nl + 1;
-            continue;
+        // Bullet list: -, *, +, →, —, – — marker kind preserved from text.
+        {
+            int matchedKind = -1;
+            size_t matchedLen = 0;
+            for (int k = 0; k < BULLET_MARKER_COUNT; k++) {
+                const char* m = BULLET_MARKERS[k];
+                size_t mLen = std::strlen(m);
+                if (body.size() >= mLen + 1 &&
+                    body.compare(0, mLen, m) == 0 &&
+                    body[mLen] == ' ') {
+                    matchedKind = k;
+                    matchedLen  = mLen;
+                    break;
+                }
+            }
+            if (matchedKind >= 0) {
+                b.type = BLOCK_BULLET;
+                b.meta = makeBulletMeta(std::min(8, indentSpaces / 2), matchedKind);
+                parseInlineInto(body.substr(matchedLen + 1), b);
+                doc.blocks.push_back(std::move(b));
+                if (nl == std::string::npos) break;
+                start = nl + 1;
+                continue;
+            }
         }
 
-        // Ordered list: N.  — keep the "N. " marker in the block text.
+        // Ordered list: N.  — marker stripped; display number is derived.
         {
             size_t k = 0;
             while (k < body.size() && std::isdigit((unsigned char)body[k])) k++;
             if (k > 0 && k + 1 < body.size() && body[k] == '.' && body[k + 1] == ' ') {
                 b.type = BLOCK_ORDERED;
                 b.meta = (uint8_t)std::min(8, indentSpaces / 2);
-                parseInlineInto(body, b);
+                parseInlineInto(body.substr(k + 2), b);
                 doc.blocks.push_back(std::move(b));
                 if (nl == std::string::npos) break;
                 start = nl + 1;
