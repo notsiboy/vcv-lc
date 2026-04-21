@@ -1,6 +1,7 @@
 #include "Capture.hpp"
 #include "Theme.hpp"
 #include "plugin.hpp"
+#include <patch.hpp>
 
 #include <GL/glew.h>
 
@@ -133,8 +134,8 @@ std::string nowStamp() {
 // Walks every module in the rack, groups by plugin, writes a markdown report
 // with plugin names + versions + per-module counts. Optionally copies the
 // report to the clipboard. Synchronous — the walk is fast.
-void CaptureModule::runScan() {
-    if (!APP || !APP->scene || !APP->scene->rack) return;
+std::string CaptureModule::buildScanMarkdown() const {
+    if (!APP || !APP->scene || !APP->scene->rack) return std::string();
 
     std::map<std::string, PluginBucket> byPlugin;
     int totalModules  = 0;
@@ -210,6 +211,13 @@ void CaptureModule::runScan() {
             + " module"  + (missingPlugin == 1 ? "" : "s")
             + " had no plugin pointer and were skipped._\n";
     }
+
+    return md;
+}
+
+void CaptureModule::runScan() {
+    std::string md = buildScanMarkdown();
+    if (md.empty()) return;
 
     std::string dir = resolveOutputDir();
     rack::system::createDirectories(dir);
@@ -563,6 +571,28 @@ void CaptureWidget::step() {
         performCapture();
         cm->stage.store(CaptureModule::IDLE);
         cm->flashT.store(rack::system::getTime(), std::memory_order_relaxed);
+
+        // Bundle finalisation runs right after the shot: scan.md dropped
+        // beside the PNG and a copy of the current patch.vcv if one exists.
+        // Reveal the folder in Finder / file manager so the user can grab it.
+        if (!cm->bundleDir.empty()) {
+            const std::string dir = cm->bundleDir;
+            {
+                std::string md = cm->buildScanMarkdown();
+                std::ofstream out(dir + "/scan.md");
+                if (out) out << md;
+            }
+            if (APP && APP->patch) {
+                std::string patchPath = APP->patch->path;
+                if (!patchPath.empty()) {
+                    std::ifstream in(patchPath, std::ios::binary);
+                    std::ofstream out(dir + "/patch.vcv", std::ios::binary);
+                    if (in && out) out << in.rdbuf();
+                }
+            }
+            rack::system::openDirectory(dir);
+            cm->bundleDir.clear();
+        }
     }
 }
 
@@ -633,14 +663,20 @@ void CaptureWidget::performCapture() {
                     pw * 4);
     }
 
-    // Build output path.
-    std::string dir = cm->resolveOutputDir();
-    rack::system::createDirectories(dir);
-    std::string pfx = cm->prefix.empty() ? std::string("capture_") : cm->prefix;
-    int idx = cm->nextIndex(dir, pfx, ".png");
-    char name[64];
-    std::snprintf(name, sizeof(name), "%s%02d.png", pfx.c_str(), idx);
-    job->path = dir + "/" + name;
+    // Build output path. Bundle mode routes the PNG to <bundleDir>/capture.png
+    // with a fixed name (no indexing) so the bundle is a clean drop-in folder.
+    if (!cm->bundleDir.empty()) {
+        rack::system::createDirectories(cm->bundleDir);
+        job->path = cm->bundleDir + "/capture.png";
+    } else {
+        std::string dir = cm->resolveOutputDir();
+        rack::system::createDirectories(dir);
+        std::string pfx = cm->prefix.empty() ? std::string("capture_") : cm->prefix;
+        int idx = cm->nextIndex(dir, pfx, ".png");
+        char name[64];
+        std::snprintf(name, sizeof(name), "%s%02d.png", pfx.c_str(), idx);
+        job->path = dir + "/" + name;
+    }
 
     std::thread(&writePng, job).detach();
 }
@@ -692,6 +728,47 @@ void CaptureWidget::appendContextMenu(Menu* menu) {
     menu->addChild(createMenuLabel("Scan"));
     menu->addChild(createMenuItem("Run scan now", "", [m]() { m->runScan(); }));
     menu->addChild(createBoolPtrMenuItem("Copy report to clipboard", "", &m->copyClipboard));
+
+    menu->addChild(new MenuSeparator);
+    menu->addChild(createMenuLabel("Bundle"));
+    // Bundle patch — pops Finder/file dialog for a destination folder,
+    // spins up a dated project subfolder inside it, then runs the normal
+    // capture flow but routes PNG + scan.md + patch.vcv into that folder.
+    // Finder is opened at the new folder once everything lands.
+    menu->addChild(createMenuItem("Bundle patch…", "", [m]() {
+        char* p = osdialog_file(OSDIALOG_OPEN_DIR, nullptr, nullptr, nullptr);
+        if (!p) return;
+        std::string destParent = p;
+        std::free(p);
+
+        std::string patchName = "untitled";
+        if (APP && APP->patch) {
+            std::string path = APP->patch->path;
+            if (!path.empty()) {
+                size_t slash = path.find_last_of("/\\");
+                std::string name = (slash == std::string::npos)
+                    ? path : path.substr(slash + 1);
+                size_t dot = name.rfind('.');
+                if (dot != std::string::npos) name = name.substr(0, dot);
+                if (!name.empty()) patchName = name;
+            }
+        }
+        std::time_t now = std::time(nullptr);
+        std::tm* lt = std::localtime(&now);
+        char datebuf[16];
+        std::strftime(datebuf, sizeof(datebuf), "%d_%m_%Y", lt);
+        std::string bundle = destParent + "/" + patchName + "_bundle_" + datebuf;
+        rack::system::createDirectories(bundle);
+
+        // Kick off the normal capture flow, same as the shutter button —
+        // fit-all zoom, settle window, then SHOOT. step() will notice the
+        // bundleDir is set and drop scan.md + patch.vcv once the PNG lands.
+        m->bundleDir = bundle;
+        if (m->fitAll && APP && APP->scene && APP->scene->rackScroll)
+            APP->scene->rackScroll->zoomToModules();
+        m->settleCountdown.store(SETTLE_FRAMES);
+        m->stage.store(CaptureModule::SETTLE);
+    }));
 
     menu->addChild(new MenuSeparator);
 

@@ -34,6 +34,12 @@ struct CaptureModule : Module {
     std::atomic<double> flashT{-1.0};     // capture button flash
     std::atomic<double> scanFlashT{-1.0}; // scan button flash
 
+    // When non-empty, the active capture flow is part of a "bundle" — the PNG
+    // is written as <bundleDir>/capture.png and, once the shot completes,
+    // scan.md + patch.vcv are dropped into the same directory. Cleared after
+    // the bundle finalises.
+    std::string bundleDir;
+
     CaptureModule();
     json_t* dataToJson() override;
     void    dataFromJson(json_t* root) override;
@@ -43,6 +49,10 @@ struct CaptureModule : Module {
                           const std::string& pfx,
                           const std::string& ext) const;
     void        runScan();
+
+    // Produces the scan markdown report without any file IO or flashing.
+    // Used by both runScan() and the bundle flow.
+    std::string buildScanMarkdown() const;
 };
 
 struct CaptureWidget : ModuleWidget {
