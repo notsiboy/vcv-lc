@@ -14,7 +14,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <dirent.h>
+#include <fstream>
+#include <map>
 #include <osdialog.h>
 #include <string>
 #include <sys/stat.h>
@@ -35,20 +38,24 @@ CaptureModule::CaptureModule() {
 
 json_t* CaptureModule::dataToJson() {
     json_t* r = json_object();
-    json_object_set_new(r, "prefix",       json_string(prefix.c_str()));
-    json_object_set_new(r, "outputDir",    json_string(outputDir.c_str()));
-    json_object_set_new(r, "hideSelf",     json_boolean(hideSelf));
-    json_object_set_new(r, "viewportOnly", json_boolean(viewportOnly));
-    json_object_set_new(r, "fitAll",       json_boolean(fitAll));
+    json_object_set_new(r, "prefix",        json_string(prefix.c_str()));
+    json_object_set_new(r, "scanPrefix",    json_string(scanPrefix.c_str()));
+    json_object_set_new(r, "outputDir",     json_string(outputDir.c_str()));
+    json_object_set_new(r, "hideSelf",      json_boolean(hideSelf));
+    json_object_set_new(r, "viewportOnly",  json_boolean(viewportOnly));
+    json_object_set_new(r, "fitAll",        json_boolean(fitAll));
+    json_object_set_new(r, "copyClipboard", json_boolean(copyClipboard));
     return r;
 }
 
 void CaptureModule::dataFromJson(json_t* root) {
-    if (json_t* j = json_object_get(root, "prefix"))       prefix       = json_string_value(j);
-    if (json_t* j = json_object_get(root, "outputDir"))    outputDir    = json_string_value(j);
-    if (json_t* j = json_object_get(root, "hideSelf"))     hideSelf     = json_boolean_value(j);
-    if (json_t* j = json_object_get(root, "viewportOnly")) viewportOnly = json_boolean_value(j);
-    if (json_t* j = json_object_get(root, "fitAll"))       fitAll       = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "prefix"))        prefix        = json_string_value(j);
+    if (json_t* j = json_object_get(root, "scanPrefix"))    scanPrefix    = json_string_value(j);
+    if (json_t* j = json_object_get(root, "outputDir"))     outputDir     = json_string_value(j);
+    if (json_t* j = json_object_get(root, "hideSelf"))      hideSelf      = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "viewportOnly"))  viewportOnly  = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "fitAll"))        fitAll        = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "copyClipboard")) copyClipboard = json_boolean_value(j);
 }
 
 std::string CaptureModule::resolveOutputDir() const {
@@ -58,19 +65,23 @@ std::string CaptureModule::resolveOutputDir() const {
     return asset::plugin(pluginInstance, outputDir);
 }
 
-int CaptureModule::scanNextIndex(const std::string& dir) const {
-    std::string pfx = prefix.empty() ? std::string("capture_") : prefix;
+// Lowercase the extension for a case-insensitive compare against on-disk
+// filenames. Accepts ".png", ".md", etc.
+int CaptureModule::nextIndex(const std::string& dir,
+                             const std::string& pfx,
+                             const std::string& ext) const {
     int maxN = 0;
     DIR* d = opendir(dir.c_str());
     if (!d) return 1;
     while (dirent* ent = readdir(d)) {
         std::string name = ent->d_name;
-        if (name.size() < pfx.size() + 4) continue;
+        if (name.size() < pfx.size() + ext.size()) continue;
         if (name.compare(0, pfx.size(), pfx) != 0) continue;
         size_t dot = name.rfind('.');
         if (dot == std::string::npos) continue;
-        std::string ext = name.substr(dot);
-        if (ext != ".png" && ext != ".PNG") continue;
+        std::string e = name.substr(dot);
+        for (char& c : e) c = (char)std::tolower((unsigned char)c);
+        if (e != ext) continue;
         std::string numStr = name.substr(pfx.size(), dot - pfx.size());
         if (numStr.empty()) continue;
         bool allDigits = true;
@@ -102,7 +113,122 @@ void writePng(CaptureJob* job) {
     delete job;
 }
 
+// ─── Scan helpers ───────────────────────────────────────────────────────────
+
+struct PluginBucket {
+    const rack::plugin::Plugin* plugin = nullptr;
+    std::map<std::string, int>  moduleCounts;   // slug → count
+};
+
+std::string nowStamp() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::tm* lt = std::localtime(&t);
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", lt);
+    return buf;
+}
+
 } // namespace
+
+// Walks every module in the rack, groups by plugin, writes a markdown report
+// with plugin names + versions + per-module counts. Optionally copies the
+// report to the clipboard. Synchronous — the walk is fast.
+void CaptureModule::runScan() {
+    if (!APP || !APP->scene || !APP->scene->rack) return;
+
+    std::map<std::string, PluginBucket> byPlugin;
+    int totalModules  = 0;
+    int missingPlugin = 0;
+
+    for (ModuleWidget* mw : APP->scene->rack->getModules()) {
+        if (!mw || !mw->module || !mw->model) continue;
+        totalModules++;
+        const rack::plugin::Plugin* p = mw->model->plugin;
+        if (!p) { missingPlugin++; continue; }
+        auto& b = byPlugin[p->slug];
+        b.plugin = p;
+        b.moduleCounts[mw->model->slug]++;
+    }
+
+    std::string md;
+    md += "# scan · " + nowStamp() + "\n\n";
+    md += std::to_string(totalModules) + " modules · "
+       +  std::to_string((int)byPlugin.size()) + " plugins\n\n";
+
+    std::vector<const PluginBucket*> ordered;
+    ordered.reserve(byPlugin.size());
+    for (auto& kv : byPlugin) ordered.push_back(&kv.second);
+    std::sort(ordered.begin(), ordered.end(),
+              [](const PluginBucket* a, const PluginBucket* b) {
+                  auto na = a->plugin ? a->plugin->name : std::string();
+                  auto nb = b->plugin ? b->plugin->name : std::string();
+                  return na < nb;
+              });
+
+    md += "## plugins\n\n";
+    for (const PluginBucket* b : ordered) {
+        if (!b->plugin) continue;
+        const auto& p = *b->plugin;
+        int subtotal = 0;
+        for (auto& kv : b->moduleCounts) subtotal += kv.second;
+        md += "- **" + p.name + "** (`" + p.slug + "`)"
+            + (p.version.empty() ? "" : " v" + p.version)
+            + " — " + std::to_string(subtotal) + " module"
+            + (subtotal == 1 ? "" : "s") + "\n";
+
+        std::vector<std::pair<std::string, int>> rows(
+            b->moduleCounts.begin(), b->moduleCounts.end());
+        std::sort(rows.begin(), rows.end(),
+                  [](const std::pair<std::string, int>& a,
+                     const std::pair<std::string, int>& c) {
+                      if (a.second != c.second) return a.second > c.second;
+                      return a.first < c.first;
+                  });
+        for (auto& r : rows) {
+            md += "  - " + r.first;
+            if (r.second > 1) md += " × " + std::to_string(r.second);
+            md += "\n";
+        }
+    }
+
+    // Install list — slugs match https://library.vcvrack.com/<slug>. No bulk
+    // subscribe URL exists, so the count prefix sets expectations.
+    int nPlugins = 0;
+    for (const PluginBucket* b : ordered) if (b->plugin) nPlugins++;
+    md += "\n## install list (" + std::to_string(nPlugins) + " plugin"
+        + (nPlugins == 1 ? "" : "s") + " to subscribe to)\n\n";
+    for (const PluginBucket* b : ordered) {
+        if (!b->plugin) continue;
+        const auto& p = *b->plugin;
+        md += "- [" + p.slug + "](https://library.vcvrack.com/" + p.slug + ")";
+        if (!p.version.empty()) md += " _v" + p.version + "_";
+        md += "\n";
+    }
+
+    if (missingPlugin > 0) {
+        md += "\n_note: " + std::to_string(missingPlugin)
+            + " module"  + (missingPlugin == 1 ? "" : "s")
+            + " had no plugin pointer and were skipped._\n";
+    }
+
+    std::string dir = resolveOutputDir();
+    rack::system::createDirectories(dir);
+    std::string pfx = scanPrefix.empty() ? std::string("scan_") : scanPrefix;
+    int idx = nextIndex(dir, pfx, ".md");
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s%02d.md", pfx.c_str(), idx);
+    std::string path = dir + "/" + name;
+    {
+        std::ofstream out(path);
+        if (out) out << md;
+    }
+
+    if (copyClipboard && APP->window && APP->window->win) {
+        glfwSetClipboardString(APP->window->win, md.c_str());
+    }
+
+    scanFlashT.store(rack::system::getTime(), std::memory_order_relaxed);
+}
 
 // ─── Widget ─────────────────────────────────────────────────────────────────
 
@@ -235,6 +361,111 @@ struct ShutterButton : widget::OpaqueWidget {
     }
 };
 
+// Scan button — same visual vocabulary as the shutter, bound to runScan and
+// its own flash atomic so the two actions animate independently.
+struct ScanRunButton : widget::OpaqueWidget {
+    CaptureModule* cm = nullptr;
+
+    void draw(const DrawArgs& args) override {
+        bool dark = lc::theme.dark;
+        float cx = box.size.x / 2.f;
+        float cy = box.size.y / 2.f;
+        float rOuter = std::min(cx, cy) - 0.5f;
+        float rInner = rOuter * 0.78f;
+        float rCore  = rOuter * 0.50f;
+
+        NVGcolor rim      = dark ? nvgRGB(40, 40, 40)  : nvgRGB(255, 255, 255);
+        NVGcolor rimEdge  = dark ? nvgRGB(90, 90, 90)  : nvgRGB(180, 180, 180);
+        NVGcolor face     = dark ? nvgRGB(55, 55, 55)  : nvgRGB(240, 240, 240);
+        NVGcolor faceEdge = dark ? nvgRGB(75, 75, 75)  : nvgRGB(210, 210, 210);
+        NVGcolor idle     = dark ? nvgRGB(95, 95, 95)  : nvgRGB(170, 170, 170);
+        NVGcolor flash    = nvgRGB(240, 150, 40);
+
+        double now = rack::system::getTime();
+        double t0  = cm ? cm->scanFlashT.load(std::memory_order_relaxed) : -1.0;
+        float flashA = 0.f;
+        if (t0 > 0 && now - t0 < 0.6) flashA = 1.f - (float)((now - t0) / 0.6);
+
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rOuter);
+        nvgFillColor(args.vg, rim); nvgFill(args.vg);
+        nvgStrokeColor(args.vg, rimEdge); nvgStrokeWidth(args.vg, 0.6f); nvgStroke(args.vg);
+
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rInner);
+        nvgFillColor(args.vg, face); nvgFill(args.vg);
+        nvgStrokeColor(args.vg, faceEdge); nvgStrokeWidth(args.vg, 0.4f); nvgStroke(args.vg);
+
+        NVGcolor core;
+        if (flashA > 0.f) {
+            core.r = idle.r + (flash.r - idle.r) * flashA;
+            core.g = idle.g + (flash.g - idle.g) * flashA;
+            core.b = idle.b + (flash.b - idle.b) * flashA;
+            core.a = 1.f;
+        } else core = idle;
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rCore);
+        nvgFillColor(args.vg, core); nvgFill(args.vg);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1 && cm) {
+            double now = rack::system::getTime();
+            double t0  = cm->scanFlashT.load(std::memory_order_relaxed);
+            if (t0 > 0 && now - t0 < 0.6) {
+                float a = 1.f - (float)((now - t0) / 0.6);
+                float cx = box.size.x / 2.f;
+                float cy = box.size.y / 2.f;
+                float r  = std::min(cx, cy);
+                NVGcolor c = nvgRGB(240, 150, 40);
+                NVGpaint glow = nvgRadialGradient(args.vg, cx, cy, r * 0.6f, r * 2.8f,
+                    nvgRGBAf(c.r, c.g, c.b, 0.45f * a),
+                    nvgRGBAf(c.r, c.g, c.b, 0.f));
+                nvgBeginPath(args.vg);
+                nvgRect(args.vg, -r * 2.5f, -r * 2.5f, box.size.x + r * 5.f, box.size.y + r * 5.f);
+                nvgFillPaint(args.vg, glow);
+                nvgFill(args.vg);
+            }
+        }
+        Widget::drawLayer(args, layer);
+    }
+
+    void onButton(const event::Button& e) override {
+        if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && cm) {
+            cm->runScan();
+            e.consume(this);
+            return;
+        }
+        OpaqueWidget::onButton(e);
+    }
+};
+
+// Short-lived "copied" confirmation — fades in + out under the scan button
+// so the user knows the markdown hit the clipboard (button flash alone
+// doesn't distinguish file-write from clipboard-copy).
+struct CopiedReadout : widget::Widget {
+    CaptureModule* cm = nullptr;
+    static constexpr double VISIBLE_S = 1.6;
+    void draw(const DrawArgs& args) override {
+        if (!cm || !cm->copyClipboard) return;
+        double t0 = cm->scanFlashT.load(std::memory_order_relaxed);
+        if (t0 <= 0) return;
+        double dt = rack::system::getTime() - t0;
+        if (dt > VISIBLE_S) return;
+
+        float a = 1.f;
+        if (dt > VISIBLE_S - 0.4) a = (float)((VISIBLE_S - dt) / 0.4);
+        a = std::max(0.f, std::min(1.f, a));
+
+        auto font = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
+        if (!font || !font->handle) return;
+        nvgFontFaceId(args.vg, font->handle);
+        nvgFontSize(args.vg, 6.f);
+        nvgTextLetterSpacing(args.vg, 0.3f);
+        NVGcolor c = lc::theme.dark ? nvgRGB(230, 230, 230) : nvgRGB(26, 26, 26);
+        nvgFillColor(args.vg, nvgRGBAf(c.r, c.g, c.b, a));
+        nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
+        nvgText(args.vg, box.size.x / 2.f, 0.f, "copied", NULL);
+    }
+};
+
 } // namespace
 
 CaptureWidget::CaptureWidget(CaptureModule* module) {
@@ -254,20 +485,49 @@ CaptureWidget::CaptureWidget(CaptureModule* module) {
     border->box.size = box.size;
     addChild(border);
 
-    {
-        CaptureLabel* l = new CaptureLabel;
-        l->text = "capture";
-        l->box.size = math::Vec(box.size.x, mm2px(3.f));
-        l->box.pos  = math::Vec(0, mm2px(9.f));
-        addChild(l);
-    }
+    // Y-positions mirror tidy's two-toggle layout so the qol family reads as
+    // one visual system: top button at logoTop - 21mm, bottom at logoTop - 10mm,
+    // labels sit 3mm above each button.
+    const float logoTopMM = 128.5f - 8.f - 9.f;
+    const float captureAnchorMM = logoTopMM - 21.f;
+    const float scanAnchorMM    = logoTopMM - 10.f;
 
+    auto placeLabel = [&](const std::string& text, float anchorMM) {
+        CaptureLabel* l = new CaptureLabel;
+        l->text = text;
+        l->box.size = math::Vec(box.size.x, mm2px(3.f));
+        l->box.pos  = math::Vec(0, mm2px(anchorMM - 3.f));
+        addChild(l);
+    };
+
+    placeLabel("capture", captureAnchorMM);
     {
         ShutterButton* b = new ShutterButton;
         b->cm = module;
         b->box.size = mm2px(math::Vec(5.f, 5.f));
-        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f, mm2px(14.f));
+        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f,
+                                mm2px(captureAnchorMM));
         addChild(b);
+    }
+
+    placeLabel("scan", scanAnchorMM);
+    {
+        ScanRunButton* b = new ScanRunButton;
+        b->cm = module;
+        b->box.size = mm2px(math::Vec(5.f, 5.f));
+        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f,
+                                mm2px(scanAnchorMM));
+        addChild(b);
+    }
+
+    // "copied" readout, tucked right under the scan button in the narrow
+    // gap before the logo.
+    {
+        CopiedReadout* r = new CopiedReadout;
+        r->cm = module;
+        r->box.size = math::Vec(box.size.x, mm2px(3.f));
+        r->box.pos  = math::Vec(0, mm2px(scanAnchorMM + 5.2f));
+        addChild(r);
     }
 
     // Logo at bottom
@@ -277,7 +537,7 @@ CaptureWidget::CaptureWidget(CaptureModule* module) {
         lg->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
         lg->box.size = mm2px(math::Vec(9.f, 9.f));
         lg->box.pos  = math::Vec((box.size.x - lg->box.size.x) / 2.f,
-                                 mm2px(128.5f - 8.f - 9.f));
+                                 mm2px(logoTopMM));
         addChild(lg);
     }
 }
@@ -376,10 +636,10 @@ void CaptureWidget::performCapture() {
     // Build output path.
     std::string dir = cm->resolveOutputDir();
     rack::system::createDirectories(dir);
-    int idx = cm->scanNextIndex(dir);
+    std::string pfx = cm->prefix.empty() ? std::string("capture_") : cm->prefix;
+    int idx = cm->nextIndex(dir, pfx, ".png");
     char name[64];
-    std::snprintf(name, sizeof(name), "%s%02d.png",
-                  cm->prefix.empty() ? "capture_" : cm->prefix.c_str(), idx);
+    std::snprintf(name, sizeof(name), "%s%02d.png", pfx.c_str(), idx);
     job->path = dir + "/" + name;
 
     std::thread(&writePng, job).detach();
@@ -395,6 +655,15 @@ struct PrefixField : ui::TextField {
     void onChange(const event::Change& e) override {
         ui::TextField::onChange(e);
         if (cm) cm->prefix = text;
+    }
+};
+
+struct ScanPrefixField : ui::TextField {
+    CaptureModule* cm = nullptr;
+    ScanPrefixField() { box.size.x = 200.f; }
+    void onChange(const event::Change& e) override {
+        ui::TextField::onChange(e);
+        if (cm) cm->scanPrefix = text;
     }
 };
 
@@ -414,16 +683,25 @@ void CaptureWidget::appendContextMenu(Menu* menu) {
     if (!m) return;
 
     menu->addChild(new MenuSeparator);
-
+    menu->addChild(createMenuLabel("Capture"));
     menu->addChild(createBoolPtrMenuItem("Fit whole rack (zoom out before shot)", "", &m->fitAll));
     menu->addChild(createBoolPtrMenuItem("Hide this module during capture", "", &m->hideSelf));
     menu->addChild(createBoolPtrMenuItem("Rack viewport only (off = whole window)", "", &m->viewportOnly));
 
     menu->addChild(new MenuSeparator);
+    menu->addChild(createMenuLabel("Scan"));
+    menu->addChild(createMenuItem("Run scan now", "", [m]() { m->runScan(); }));
+    menu->addChild(createBoolPtrMenuItem("Copy report to clipboard", "", &m->copyClipboard));
 
-    menu->addChild(createMenuLabel("Filename prefix"));
+    menu->addChild(new MenuSeparator);
+
+    menu->addChild(createMenuLabel("Capture filename prefix"));
     PrefixField* pf = new PrefixField; pf->cm = m; pf->text = m->prefix;
     menu->addChild(pf);
+
+    menu->addChild(createMenuLabel("Scan filename prefix"));
+    ScanPrefixField* sf = new ScanPrefixField; sf->cm = m; sf->text = m->scanPrefix;
+    menu->addChild(sf);
 
     menu->addChild(createMenuLabel("Output directory"));
     DirField* df = new DirField; df->cm = m; df->text = m->outputDir;

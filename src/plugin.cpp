@@ -12,5 +12,5 @@ void init(Plugin* p) {
     p->addModel(modelJump);
     p->addModel(modelTake);
     p->addModel(modelCapture);
-    p->addModel(modelScan);
+    p->addModel(modelGrab2);
 }

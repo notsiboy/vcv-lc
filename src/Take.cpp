@@ -154,6 +154,8 @@ json_t* TakeModule::dataToJson() {
     json_object_set_new(r, "bitDepth",  json_integer(bitDepth));
     json_object_set_new(r, "prefix",    json_string(prefix.c_str()));
     json_object_set_new(r, "outputDir", json_string(outputDir.c_str()));
+    json_object_set_new(r, "snipThreshDb",   json_real(snipThreshDb));
+    json_object_set_new(r, "snipHangoverMs", json_real(snipHangoverMs));
     return r;
 }
 
@@ -165,14 +167,22 @@ void TakeModule::dataFromJson(json_t* root) {
     if (json_t* j = json_object_get(root, "bitDepth"))  bitDepth  = (int)json_integer_value(j);
     if (json_t* j = json_object_get(root, "prefix"))    prefix    = json_string_value(j);
     if (json_t* j = json_object_get(root, "outputDir")) outputDir = json_string_value(j);
+    if (json_t* j = json_object_get(root, "snipThreshDb"))   snipThreshDb   = json_real_value(j);
+    if (json_t* j = json_object_get(root, "snipHangoverMs")) snipHangoverMs = json_real_value(j);
     rebuildBuffer();
 }
 
 std::string TakeModule::resolveOutputDir() const {
-    if (outputDir.empty()) return asset::plugin(pluginInstance, "test");
-    if (outputDir[0] == '/' || (outputDir.size() > 1 && outputDir[1] == ':'))
-        return outputDir;
-    return asset::plugin(pluginInstance, outputDir);
+    std::string base;
+    if (outputDir.empty())
+        base = asset::plugin(pluginInstance, "test");
+    else if (outputDir[0] == '/' || (outputDir.size() > 1 && outputDir[1] == ':'))
+        base = outputDir;
+    else
+        base = asset::plugin(pluginInstance, outputDir);
+
+    if (!subfolder.empty()) base += "/" + subfolder;
+    return base;
 }
 
 int TakeModule::scanNextIndex(const std::string& dir) const {
@@ -210,8 +220,34 @@ void TakeModule::process(const ProcessArgs& args) {
     const bool rCon = inputs[IN_R].isConnected();
     float l = lCon ? inputs[IN_L].getVoltage() * 0.1f : 0.f;
     float r = rCon ? inputs[IN_R].getVoltage() * 0.1f : 0.f;
-    if (lCon && !rCon) r = l;       // duplicate mono-left into right
-    else if (!lCon && rCon) l = r;  // mono-right into left
+    // Mirror a mono source into both sides — applies to ring buffer, bins,
+    // and (via the same values) any flanking peak-column displays. Matches
+    // grab's meter behaviour so mono signals light both sides.
+    if (lCon && !rCon) r = l;
+    else if (!lCon && rCon) l = r;
+    const float lBin = l;
+    const float rBin = r;
+
+    // Snip mode: freeze the ring + bins during silence so the waveform and
+    // any subsequent save naturally drop the quiet stretches. A hangover
+    // counter debounces short silences (breaths, inter-word pauses) so the
+    // ring doesn't stutter on speech or transients.
+    if (snipActive.load(std::memory_order_relaxed)) {
+        const float threshLin = std::pow(10.f, snipThreshDb / 20.f);
+        const bool  silent    = std::max(std::fabs(lBin), std::fabs(rBin)) < threshLin;
+        if (silent) {
+            snipSilenceSamples += 1.f;
+            const float hangoverSam = snipHangoverMs * 0.001f * args.sampleRate;
+            if (snipSilenceSamples >= hangoverSam) snipFrozen = true;
+        } else {
+            snipSilenceSamples = 0.f;
+            snipFrozen = false;
+        }
+        if (snipFrozen) return;
+    } else {
+        snipFrozen = false;
+        snipSilenceSamples = 0.f;
+    }
 
     // Ring buffer write.
     buffer[writePos * 2 + 0] = l;
@@ -220,8 +256,8 @@ void TakeModule::process(const ProcessArgs& args) {
     if (writePos >= capFrames) { writePos = 0; filled = true; }
 
     // Bin accumulation — peak-hold per bin.
-    curBinPeakL = std::max(curBinPeakL, std::fabs(l));
-    curBinPeakR = std::max(curBinPeakR, std::fabs(r));
+    curBinPeakL = std::max(curBinPeakL, std::fabs(lBin));
+    curBinPeakR = std::max(curBinPeakR, std::fabs(rBin));
     samplesInBin++;
     if (samplesInBin >= samplesPerBin) {
         bins[binWriteIdx].l = curBinPeakL;
@@ -238,6 +274,16 @@ void TakeModule::process(const ProcessArgs& args) {
 void TakeModule::saveTake() {
     if (capFrames == 0) return;
 
+    // Detect mono-vs-stereo at save time based on the current connection
+    // state. The ring is always stored stereo-interleaved; when only one
+    // side is patched the audio thread duplicates it into the other slot,
+    // so extracting a single channel gives a clean mono file.
+    const bool lCon = inputs[IN_L].isConnected();
+    const bool rCon = inputs[IN_R].isConnected();
+    const bool mono = (lCon != rCon);
+    const int  srcSlot = lCon ? 0 : 1;
+    const int  outCh   = mono ? 1 : 2;
+
     // Compose output path.
     std::string dir = resolveOutputDir();
     rack::system::createDirectories(dir);
@@ -249,7 +295,7 @@ void TakeModule::saveTake() {
 
     // Copy the ring in chronological order.
     TakeJob* job = new TakeJob();
-    job->channels   = 2;
+    job->channels   = outCh;
     job->sampleRate = sampleRate;
     job->bitDepth   = bitDepth;
     job->fadeInMs   = fadeInMs;
@@ -257,21 +303,25 @@ void TakeModule::saveTake() {
     job->normalize  = normalize;
     job->path       = path;
 
+    auto copyRange = [&](size_t startFrame, size_t count) {
+        if (mono) {
+            for (size_t i = 0; i < count; i++) {
+                job->buf.push_back(buffer[(startFrame + i) * 2 + srcSlot]);
+            }
+        } else {
+            job->buf.insert(job->buf.end(),
+                            buffer.begin() + startFrame * 2,
+                            buffer.begin() + (startFrame + count) * 2);
+        }
+    };
+
     if (!filled) {
-        // Only writePos frames have meaningful data; they start at 0.
-        job->buf.assign(buffer.begin(), buffer.begin() + writePos * 2);
+        job->buf.reserve(writePos * (size_t)outCh);
+        copyRange(0, writePos);
     } else {
-        // Full buffer. Oldest frame is at writePos; walk around.
-        job->buf.reserve(capFrames * 2);
-        size_t tail = capFrames - writePos;
-        // from writePos .. end
-        job->buf.insert(job->buf.end(),
-                        buffer.begin() + writePos * 2,
-                        buffer.begin() + writePos * 2 + tail * 2);
-        // from 0 .. writePos
-        job->buf.insert(job->buf.end(),
-                        buffer.begin(),
-                        buffer.begin() + writePos * 2);
+        job->buf.reserve(capFrames * (size_t)outCh);
+        copyRange(writePos, capFrames - writePos); // oldest → wrap point
+        copyRange(0, writePos);                    // wrap point → newest
     }
 
     std::thread(&processAndWrite, job).detach();

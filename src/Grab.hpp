@@ -7,6 +7,13 @@
 struct GrabModule : Module {
     enum InputId { IN_L, IN_R, NUM_INPUTS };
 
+    // Universal mode selector, cycled by the panel's left LED button.
+    //   OFF  — no auto-behaviour; user drives recording manually
+    //   GRAB — classic auto-triggered one-shot on threshold crossing
+    //   SNIP — silence-gate for any associated rolling buffer
+    //          (TakeModule consults this via its own snipActive flag)
+    enum Mode : int { MODE_OFF = 0, MODE_GRAB = 1, MODE_SNIP = 2 };
+
     // Menu-configurable, persisted
     float thresholdDb = -65.f;    // open / close threshold
     float hangoverMs  = 250.f;    // silence duration before stop
@@ -18,12 +25,14 @@ struct GrabModule : Module {
     int   bitDepth    = 24;       // 16, 24, or 0 (float32)
     std::string prefix    = "grab_";
     std::string outputDir = "";   // empty = default (plugin_dir/test)
+    std::string subfolder = "";   // appended to outputDir when non-empty
 
     // Live read from UI thread (peak meter / rec LED)
     std::atomic<float> peakL{0.f};
     std::atomic<float> peakR{0.f};
     std::atomic<bool>  recording{false};
-    std::atomic<bool>  armed{false};
+    std::atomic<int>   mode{MODE_OFF};           // see Mode enum
+    std::atomic<bool>  forceRec{false};          // manual record toggle (overrides mode)
     std::atomic<bool>  spareNeedsRealloc{false};
 
     // Internal DSP state
@@ -40,6 +49,7 @@ struct GrabModule : Module {
     float hangoverSamples = 0.f;      // countdown
     int   armCounter = 0;             // contiguous samples above threshold
     bool  takeStereo = false;
+    bool  forceStarted = false;       // current take was initiated by forceRec
 
     static constexpr float ARM_GUARD_MS = 3.f;
     static constexpr float MIN_TAKE_MS = 50.f;
