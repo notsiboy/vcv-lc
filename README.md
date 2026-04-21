@@ -33,20 +33,23 @@ One recorder, every mode. Builds on `grab` (auto-triggered one-shot) and `take` 
 
 ![journal module](docs/journal.png)
 
-Resizable text canvas with a proper rich-text editor underneath. Built on a document model — formatting is metadata on bytes, not markdown markers sitting inside your text.
+Resizable text canvas with a real rich-text editor underneath. Document model follows ProseMirror's bones: blocks have a type (paragraph / heading / bullet / ordered / HR), formatting is metadata on bytes, and list markers are structural — they're rendered from block type + depth, never stored inside the text.
 
-- Pure black / pure white canvas, shared dark-mode toggle
+- Theme-aware canvas (light / dark / grey), shared across all Lux Cache modules
 - Drag the bottom-right corner to resize (3–128 HP)
 - Centred title field between the top screws
 - Cmd+B / Cmd+I / Cmd+E for bold / italic / inline code — with **pending-mark** semantics (no selection = next character picks up the style, no markers to trip over)
 - Cmd+Shift+] / [ cycles heading level (paragraph ↔ H3 … H1)
-- Type `# ` at line start for a heading, `- `/`* `/`+ ` for a bullet, `1. ` for ordered, `---` alone for a horizontal rule
-- Enter on a list auto-continues the marker (ordered auto-increments); Enter on an empty item exits the list
-- Tab / Shift+Tab indents / outdents list items
+- Type `# ` at line start for a heading; `- `, `* `, `+ `, `→ `, `— `, `– ` for a bullet; `1. ` for ordered; `---` alone for a horizontal rule
+- Bullet markers **preserve whatever character you typed** — lists can mix `-`, `*`, `+`, `→`, `—`, `–` freely, and each item remembers its own
+- New lists auto-indent one level for visual breathing room; Shift+Tab to bring flush with the margin, Shift+Tab again to exit the list
+- Enter on a non-empty list item continues at the same depth; Enter on an empty item outdents one level, and at depth 0 exits the list
+- Ordered list numbers auto-derive from position — delete / reorder items and the numbering updates itself
+- Tab / Shift+Tab indent and outdent inside a list; in a paragraph Tab inserts a literal tab, Shift+Tab falls through to Rack's focus-prev
 - Visual-line arrow nav, word-level Alt+arrows, line Home/End, doc Cmd+↑/↓
 - Cmd+A / C / X / V clipboard, Cmd+Z / Cmd+Shift+Z undo/redo with typing coalescing
-- Click / drag / double-click-word / triple-click-block selection
-- Right-click menu: export as `.md` or `.txt`, insert horizontal line, hide logo, dark mode
+- Click / shift-click / drag to select. Double-click selects a word, triple-click a block; dragging after either snaps the selection to word / block boundaries (Google Docs feel)
+- Right-click menu: export as `.md` or `.txt`, insert horizontal rule, hide logo, theme picker
 - Round-trips cleanly through markdown on save/load
 
 ### tidy
