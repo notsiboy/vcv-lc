@@ -290,11 +290,7 @@ void TidyWidget::appendContextMenu(Menu* menu) {
 
     menu->addChild(new MenuSeparator);
 
-    menu->addChild(createMenuItem("Dark mode (shared)",
-        CHECKMARK(lc::theme.dark), []() {
-            lc::theme.dark = !lc::theme.dark;
-            lc::saveTheme();
-        }));
+    lc::appendThemeMenu(menu);
     menu->addChild(createBoolPtrMenuItem("Also hide plug heads", "", &tm->hidePlugHeads));
 
     menu->addChild(createMenuItem("Restore everything now", "", [this]() {

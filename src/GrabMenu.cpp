@@ -146,9 +146,5 @@ void GrabWidget::appendContextMenu(Menu* menu) {
 
     menu->addChild(new MenuSeparator);
 
-    menu->addChild(createMenuItem("Dark mode (shared)",
-        CHECKMARK(lc::theme.dark), []() {
-            lc::theme.dark = !lc::theme.dark;
-            lc::saveTheme();
-        }));
+    lc::appendThemeMenu(menu);
 }

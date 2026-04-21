@@ -171,11 +171,10 @@ void TidyModule::dataFromJson(json_t* root) {
 
 struct PngImageWidget : widget::Widget {
     std::string path;
-    std::string darkPath;
+    std::string darkPath, greyPath;
     TidyModule* tm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = lc::theme.dark;
-        std::string use = (dark && !darkPath.empty()) ? darkPath : path;
+                std::string use = lc::logoAsset(path, darkPath, greyPath);
         std::shared_ptr<window::Image> img = APP->window->loadImage(use);
         if (!img || img->handle < 0) return;
         NVGpaint paint = nvgImagePattern(args.vg, 0, 0, box.size.x, box.size.y, 0, img->handle, 1.f);
@@ -189,10 +188,9 @@ struct PngImageWidget : widget::Widget {
 struct BackgroundWidget : widget::Widget {
     TidyModule* tm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = lc::theme.dark;
-        nvgBeginPath(args.vg);
+                nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
-        nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
+        nvgFillColor(args.vg, lc::panelBg());
         nvgFill(args.vg);
     }
 };
@@ -587,6 +585,8 @@ TidyWidget::TidyWidget(TidyModule* module) {
     logo->tm = module;
     logo->path = asset::plugin(pluginInstance, "res/lc-icon-new.png");
     logo->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
+
+    logo->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
     logo->box.size = mm2px(Vec(9.f, 9.f));
     logo->box.pos = Vec((box.size.x - logo->box.size.x) / 2.f, mm2px(logoTopMM));
     addChild(logo);

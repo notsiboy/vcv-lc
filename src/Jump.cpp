@@ -276,19 +276,17 @@ namespace {
 
 struct JumpBackground : widget::Widget {
     void draw(const DrawArgs& args) override {
-        bool dark = lc::theme.dark;
-        nvgBeginPath(args.vg);
+                nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
-        nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
+        nvgFillColor(args.vg, lc::panelBg());
         nvgFill(args.vg);
     }
 };
 
 struct JumpLogo : widget::Widget {
-    std::string path, darkPath;
+    std::string path, darkPath, greyPath;
     void draw(const DrawArgs& args) override {
-        bool dark = lc::theme.dark;
-        std::string use = (dark && !darkPath.empty()) ? darkPath : path;
+                std::string use = lc::logoAsset(path, darkPath, greyPath);
         auto img = APP->window->loadImage(use);
         if (!img || img->handle < 0) return;
         NVGpaint p = nvgImagePattern(args.vg, 0, 0, box.size.x, box.size.y, 0, img->handle, 1.f);
@@ -416,7 +414,9 @@ JumpWidget::JumpWidget(JumpModule* module) {
         JumpLogo* lg = new JumpLogo;
         lg->path     = asset::plugin(pluginInstance, "res/lc-icon-new.png");
         lg->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
-        lg->box.size = mm2px(math::Vec(9.f, 9.f));
+
+        lg->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
+        lg->box.size = mm2px(Vec(9.f, 9.f));
         lg->box.pos  = math::Vec((box.size.x - lg->box.size.x) / 2.f,
                                  mm2px(128.5f - 8.f - 9.f));
         addChild(lg);
@@ -510,11 +510,7 @@ void JumpWidget::appendContextMenu(Menu* menu) {
     }
 
     menu->addChild(new MenuSeparator);
-    menu->addChild(createMenuItem("Dark mode (shared)",
-        CHECKMARK(lc::theme.dark), []() {
-            lc::theme.dark = !lc::theme.dark;
-            lc::saveTheme();
-        }));
+    lc::appendThemeMenu(menu);
 }
 
 Model* modelJump = createModel<JumpModule, JumpWidget>("jump");

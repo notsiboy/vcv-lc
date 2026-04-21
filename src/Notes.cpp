@@ -1653,11 +1653,7 @@ struct NotesTextField : ui::TextField {
             }));
             menu->addChild(createBoolPtrMenuItem("Hide logo", "", &nm->hideLogo));
             menu->addChild(new ui::MenuSeparator);
-            menu->addChild(createMenuItem("Dark mode (shared)",
-                CHECKMARK(lc::theme.dark), []() {
-                    lc::theme.dark = !lc::theme.dark;
-                    lc::saveTheme();
-                }));
+            lc::appendThemeMenu(menu);
         }
     }
 };
@@ -1669,10 +1665,9 @@ struct NotesTextField : ui::TextField {
 struct NotesBackground : widget::Widget {
     NotesModule* nm = nullptr;
     void draw(const DrawArgs& args) override {
-        bool dark = lc::theme.dark;
-        nvgBeginPath(args.vg);
+                nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
-        nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
+        nvgFillColor(args.vg, lc::panelBg());
         nvgFill(args.vg);
     }
 };
@@ -1932,11 +1927,7 @@ struct NotesWidget : ModuleWidget {
         }));
         menu->addChild(createBoolPtrMenuItem("Hide logo", "", &m->hideLogo));
         menu->addChild(new ui::MenuSeparator);
-        menu->addChild(createMenuItem("Dark mode (shared)",
-            CHECKMARK(lc::theme.dark), []() {
-                lc::theme.dark = !lc::theme.dark;
-                lc::saveTheme();
-            }));
+        lc::appendThemeMenu(menu);
     }
 };
 
