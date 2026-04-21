@@ -48,6 +48,12 @@
       "name": "capture",
       "description": "One-click PNG snapshot of the visible rack. High-DPI native, hides itself during the shot so the capture button doesn't appear in the screenshot.",
       "tags": ["Utility", "Visual"]
+    },
+    {
+      "slug": "scan",
+      "name": "scan",
+      "description": "Dependency inventory for the current patch. Walks every module, groups by plugin, writes a markdown report listing plugins and versions for sharing.",
+      "tags": ["Utility"]
     }
   ]
 }
