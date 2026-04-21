@@ -16,44 +16,65 @@
     {
       "slug": "journal",
       "name": "journal",
-      "description": "Resizable journal canvas with smart text editing, markdown formatting, headings, lists, and exports.",
-      "tags": ["Utility", "Visual"]
+      "description": "Resizable notes canvas with smart text editing, markdown formatting, headings, lists, and exports.",
+      "tags": [
+        "Utility",
+        "Visual"
+      ]
     },
     {
       "slug": "tidy",
       "name": "tidy",
-      "description": "Selectively hide or fade individual modules and cables without changing global cable opacity.",
-      "tags": ["Utility", "Visual"]
+      "description": "Hide or fade individual modules and cables without changing global cable opacity.",
+      "tags": [
+        "Utility",
+        "Visual"
+      ]
     },
     {
       "slug": "grab",
       "name": "grab",
       "description": "Auto-triggered one-shot recorder. Records until silent, writes WAV with optional fades and normalise.",
-      "tags": ["Recording", "Utility"]
+      "tags": [
+        "Recording",
+        "Utility"
+      ]
     },
     {
       "slug": "jump",
-      "name": "jump",
+      "name": "jump (beta)",
       "description": "Saved-view bookmarks plus fuzzy module finder. Nine slots, back/forward history, Raycast-style palette.",
-      "tags": ["Utility", "Visual"]
+      "tags": [
+        "Utility",
+        "Visual"
+      ]
     },
     {
       "slug": "take",
       "name": "take",
       "description": "Session-aware recorder. Rolls a continuous buffer of the last N seconds; click save to capture retroactively. Voice-memos style vertical waveform.",
-      "tags": ["Recording", "Utility"]
+      "tags": [
+        "Recording",
+        "Utility"
+      ]
     },
     {
       "slug": "capture",
       "name": "capture",
-      "description": "Two-button export: one-click PNG snapshot of the visible rack, and a scan button that writes a markdown dependency inventory (plugins, versions, module counts) for sharing.",
-      "tags": ["Utility", "Visual"]
+      "description": "Export PNG snapshots and copy rack inventory (plugins, versions, module counts) for sharing.",
+      "tags": [
+        "Utility",
+        "Visual"
+      ]
     },
     {
       "slug": "grab2",
       "name": "grab 2",
-      "description": "Combined recorder. Auto-triggered one-shot (grab), retrospective rolling buffer (take), silence-gated ring (snip), plus a big rec button — short click to force-record, long click to save take.",
-      "tags": ["Recording", "Utility"]
+      "description": "Smart recorder. Auto-triggered one-shot (grab), retrospective rolling buffer (take), silence-gated ring (snip), plus a big rec button — short click to force-record, long click to save take.",
+      "tags": [
+        "Recording",
+        "Utility"
+      ]
     }
   ]
 }
