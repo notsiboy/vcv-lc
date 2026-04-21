@@ -15,12 +15,27 @@ Pos Doc::clampPos(const Pos& p) const {
     if (r.block < 0) r.block = 0;
     if (r.block >= (int)blocks.size()) r.block = (int)blocks.size() - 1;
 
-    // Never let the caret land inside an HR — snap to the start of the next
-    // navigable block (or end of doc).
-    while (blocks[r.block].type == BLOCK_HR) {
-        if (r.block + 1 < (int)blocks.size()) { r.block++; r.offset = 0; }
-        else if (r.block > 0)                  { r.block--; r.offset = blocks[r.block].length(); }
-        else break;
+    // Never let the caret land on an HR. Prefer the next content block
+    // (caret at its start); if nothing ahead, fall back to the previous
+    // content block (caret at its end). If the doc is all HRs (degenerate),
+    // leave r.block as-is — the offset clamp below still produces a valid
+    // Pos.
+    if (blocks[r.block].type == BLOCK_HR) {
+        int n = (int)blocks.size();
+        int found = -1;
+        for (int i = r.block + 1; i < n; i++) {
+            if (blocks[i].type != BLOCK_HR) { found = i; r.offset = 0; break; }
+        }
+        if (found < 0) {
+            for (int i = r.block - 1; i >= 0; i--) {
+                if (blocks[i].type != BLOCK_HR) {
+                    found = i;
+                    r.offset = blocks[i].length();
+                    break;
+                }
+            }
+        }
+        if (found >= 0) r.block = found;
     }
 
     int len = blocks[r.block].length();
@@ -149,8 +164,7 @@ void insertText(Doc& doc, Selection& sel, const std::string& s, uint8_t marks) {
         if (nl == std::string::npos) break;
 
         // Newline: split the current block, caret lands at start of new.
-        Block& newB = splitBlockAt(doc, p.block, p.offset);
-        (void)newB;
+        splitBlockAt(doc, p.block, p.offset);
         p.block++;
         p.offset = 0;
         start = nl + 1;
@@ -598,8 +612,6 @@ Doc fromMarkdown(const std::string& md) {
 
     // Split on '\n'. Each non-empty logical line becomes one block.
     size_t start = 0;
-    bool first = true;
-    (void)first;
     while (start <= md.size()) {
         size_t nl = md.find('\n', start);
         std::string line = md.substr(start, (nl == std::string::npos ? md.size() : nl) - start);

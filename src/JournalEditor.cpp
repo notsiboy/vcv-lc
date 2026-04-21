@@ -391,8 +391,7 @@ void JournalEditor::draw(const DrawArgs& args) {
 
 void JournalEditor::step() {
     OpaqueWidget::step();
-    // Invalidate row cache if the box width changed since last draw.
-    static thread_local float lastBoxW = -1.f;
+    // Invalidate row cache if the box width changed since last step.
     if (box.size.x != lastBoxW) { invalidateRows(); lastBoxW = box.size.x; }
 }
 
@@ -651,6 +650,8 @@ void JournalEditor::markChanged() {
 
 void JournalEditor::pushUndo(EditKind kind) {
     double now = rack::system::getTime();
+    // Any new edit invalidates the redo chain.
+    redoStack.clear();
     // Coalesce consecutive typing / deleting within 500ms — one undo step
     // per run of characters feels right for writing.
     if (!undoStack.empty()
@@ -658,13 +659,11 @@ void JournalEditor::pushUndo(EditKind kind) {
         && kind == lastEditKind
         && (now - lastEditT) < 0.5) {
         lastEditT = now;
-        redoStack.clear();
         return;
     }
     Snapshot s{doc, sel};
     undoStack.push_back(std::move(s));
     if (undoStack.size() > 200) undoStack.erase(undoStack.begin());
-    redoStack.clear();
     lastEditKind = kind;
     lastEditT = now;
 }

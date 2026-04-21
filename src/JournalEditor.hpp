@@ -77,6 +77,11 @@ struct JournalEditor : widget::OpaqueWidget {
     EditKind lastEditKind = EditKind::OTHER;
     double   lastEditT    = 0.0;
 
+    // Per-instance width cache: row layout depends on box width, so we
+    // invalidate when it changes. Must be per-widget — two open journals can
+    // have different widths and mustn't share this flag.
+    float lastBoxW = -1.f;
+
     // Multi-click tracking for word / paragraph select.
     double lastClickT   = -1.0;
     int    clickStreak  = 0;
