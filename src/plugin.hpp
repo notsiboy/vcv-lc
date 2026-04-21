@@ -10,3 +10,4 @@ extern Model* modelGrab;
 extern Model* modelJump;
 extern Model* modelTake;
 extern Model* modelCapture;
+extern Model* modelScan;
