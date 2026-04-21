@@ -60,7 +60,7 @@ json_t* GrabModule::dataToJson() {
     json_object_set_new(root, "bitDepth",    json_integer(bitDepth));
     json_object_set_new(root, "prefix",      json_string(prefix.c_str()));
     json_object_set_new(root, "outputDir",   json_string(outputDir.c_str()));
-    json_object_set_new(root, "armed",       json_boolean(armed.load()));
+    json_object_set_new(root, "mode",        json_integer(mode.load()));
     return root;
 }
 
@@ -75,20 +75,27 @@ void GrabModule::dataFromJson(json_t* root) {
     if (json_t* j = json_object_get(root, "bitDepth"))    bitDepth    = (int)json_integer_value(j);
     if (json_t* j = json_object_get(root, "prefix"))      prefix      = json_string_value(j);
     if (json_t* j = json_object_get(root, "outputDir"))   outputDir   = json_string_value(j);
-    if (json_t* j = json_object_get(root, "armed"))       armed.store(json_boolean_value(j));
+    // New: mode int. Legacy saves used an "armed" boolean — map it forward.
+    if (json_t* j = json_object_get(root, "mode"))        mode.store((int)json_integer_value(j));
+    else if (json_t* j = json_object_get(root, "armed"))  mode.store(json_boolean_value(j) ? MODE_GRAB : MODE_OFF);
     rebuildBuffers();
 }
 
 // ─── Output-path resolution ─────────────────────────────────────────────────
 
 std::string GrabModule::resolveOutputDir() const {
+    std::string base;
     if (outputDir.empty())
-        return asset::plugin(pluginInstance, "test");
+        base = asset::plugin(pluginInstance, "test");
     // Absolute path? use as-is. Otherwise resolve relative to plugin dir.
-    if (!outputDir.empty() && (outputDir[0] == '/' ||
-        (outputDir.size() > 1 && outputDir[1] == ':')))
-        return outputDir;
-    return asset::plugin(pluginInstance, outputDir);
+    else if (outputDir[0] == '/' ||
+             (outputDir.size() > 1 && outputDir[1] == ':'))
+        base = outputDir;
+    else
+        base = asset::plugin(pluginInstance, outputDir);
+
+    if (!subfolder.empty()) base += "/" + subfolder;
+    return base;
 }
 
 int GrabModule::scanNextIndex(const std::string& dir) const {
@@ -228,6 +235,16 @@ void GrabModule::process(const ProcessArgs& args) {
     // Read — normalize 10 V range to ±1 for file; many sources exceed this but clip at write.
     float l = lConnected ? inputs[IN_L].getVoltage() * 0.1f : 0.f;
     float r = rConnected ? inputs[IN_R].getVoltage() * 0.1f : 0.f;
+
+    // Meter values: mirror a mono source into BOTH sides so both peak
+    // columns light up — reassures the user that recording a mono input
+    // (just L, or just R) is a supported workflow.
+    float lMeter = l, rMeter = r;
+    if (lConnected && !rConnected) rMeter = lMeter;
+    else if (!lConnected && rConnected) lMeter = rMeter;
+
+    // File-writing path: existing R→L upgrade so a right-only jack still
+    // writes a left channel.
     if (!stereo && !lConnected && rConnected) { l = r; }
 
     float mag = std::max(std::fabs(l), std::fabs(r));
@@ -236,8 +253,8 @@ void GrabModule::process(const ProcessArgs& args) {
     float pL = peakL.load(std::memory_order_relaxed);
     float pR = peakR.load(std::memory_order_relaxed);
     float decay = std::exp(-1.f / (args.sampleRate * 0.25f));
-    pL = std::max(std::fabs(l), pL * decay);
-    pR = std::max(std::fabs(r), pR * decay);
+    pL = std::max(std::fabs(lMeter), pL * decay);
+    pR = std::max(std::fabs(rMeter), pR * decay);
     peakL.store(pL, std::memory_order_relaxed);
     peakR.store(pR, std::memory_order_relaxed);
 
@@ -252,16 +269,23 @@ void GrabModule::process(const ProcessArgs& args) {
     const float threshLin = std::pow(10.f, thresholdDb / 20.f);
     const bool signalAbove = mag > threshLin;
 
-    const bool isArmed = armed.load(std::memory_order_relaxed);
+    // Only MODE_GRAB counts for auto-triggering. MODE_SNIP is a rolling-
+    // buffer behaviour that lives in TakeModule; grab stays idle in that mode
+    // and the user drives recording via force-rec.
+    const bool isArmed = (mode.load(std::memory_order_relaxed) == MODE_GRAB);
+    const bool isForce = forceRec.load(std::memory_order_relaxed);
 
     if (!recording.load(std::memory_order_relaxed)) {
-        if (!isArmed)                    { armCounter = 0; return; }
+        if (!isArmed && !isForce)        { armCounter = 0; return; }
         if (!(lConnected || rConnected)) { armCounter = 0; return; }
-        // Require N contiguous samples above threshold to reject single-sample clicks.
-        if (signalAbove) armCounter++;
-        else             armCounter = 0;
-        int armNeeded = (int)std::ceil(ARM_GUARD_MS * 0.001f * args.sampleRate);
-        if (armCounter < armNeeded) return;
+        // Force-rec starts immediately, bypassing the threshold arm latch.
+        if (!isForce) {
+            if (signalAbove) armCounter++;
+            else             armCounter = 0;
+            int armNeeded = (int)std::ceil(ARM_GUARD_MS * 0.001f * args.sampleRate);
+            if (armCounter < armNeeded) return;
+        }
+        forceStarted = isForce;
         // Start a new take.
         takeStereo = stereo;
         const int tch = takeStereo ? 2 : 1;
@@ -292,9 +316,19 @@ void GrabModule::process(const ProcessArgs& args) {
             else            { takeBuf.push_back(lConnected ? l : r); }
         }
 
-        if (!isArmed)         hangoverSamples = -1.f; // disarm → force stop
-        else if (signalAbove) hangoverSamples = hangoverMs * 0.001f * args.sampleRate;
-        else                  hangoverSamples -= 1.f;
+        // Stop logic branches on who started this take:
+        //   force-started → only the force toggle closes it (click-again to stop)
+        //   arm-started   → normal threshold/hangover + disarm-force-stop
+        if (forceStarted) {
+            if (!isForce) hangoverSamples = -1.f;
+            else          hangoverSamples = hangoverMs * 0.001f * args.sampleRate;
+        } else if (!isArmed) {
+            hangoverSamples = -1.f;
+        } else if (signalAbove) {
+            hangoverSamples = hangoverMs * 0.001f * args.sampleRate;
+        } else {
+            hangoverSamples -= 1.f;
+        }
 
         const bool atCap   = (takeBuf.size() + tch > capSamples);
         const bool timeout = (hangoverSamples <= 0.f);
@@ -334,6 +368,7 @@ void GrabModule::process(const ProcessArgs& args) {
             }
 
             recording.store(false, std::memory_order_relaxed);
+            forceStarted = false;
             hangoverSamples = 0.f;
             armCounter = 0;
         }
@@ -357,7 +392,11 @@ struct GrabBackground : widget::Widget {
 struct ArmToggle : widget::OpaqueWidget {
     GrabModule* gm = nullptr;
 
-    bool isOn() const { return gm && gm->armed.load(std::memory_order_relaxed); }
+    // Standalone grab exposes only OFF / GRAB through this toggle — snip is a
+    // rec+ concept and has no meaning here without a rolling buffer.
+    bool isOn() const {
+        return gm && gm->mode.load(std::memory_order_relaxed) == GrabModule::MODE_GRAB;
+    }
 
     void draw(const DrawArgs& args) override {
         bool dark = lc::theme.dark;
@@ -408,8 +447,11 @@ struct ArmToggle : widget::OpaqueWidget {
     void onButton(const event::Button& e) override {
         OpaqueWidget::onButton(e);
         if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && gm) {
-            gm->armed.store(!gm->armed.load(std::memory_order_relaxed),
-                            std::memory_order_relaxed);
+            int cur = gm->mode.load(std::memory_order_relaxed);
+            gm->mode.store(cur == GrabModule::MODE_GRAB
+                               ? GrabModule::MODE_OFF
+                               : GrabModule::MODE_GRAB,
+                           std::memory_order_relaxed);
             e.consume(this);
         }
     }

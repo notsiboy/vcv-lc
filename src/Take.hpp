@@ -30,6 +30,7 @@ struct TakeModule : Module {
     int         bitDepth  = 24;       // 16 / 24 / 0 (= float32)
     std::string prefix    = "take_";
     std::string outputDir = "";
+    std::string subfolder = "";  // appended to outputDir when non-empty
 
     // ── Runtime state ───────────────────────────────────────────────────────
     float  sampleRate = 44100.f;
@@ -50,6 +51,17 @@ struct TakeModule : Module {
 
     // Lit briefly after a successful save, so the panel button can flash.
     std::atomic<double> saveFlashT{-1.0};
+
+    // When true, the rolling ring freezes during silence — writePos, filled,
+    // and bin accumulation all stop advancing. Used by rec+ to implement
+    // "snip mode" without TakeModule needing to know about GrabModule.
+    std::atomic<bool> snipActive{false};
+    float snipThreshDb   = -60.f;  // below this counts as silence
+    float snipHangoverMs = 100.f;  // debounce — continuous silence required before freeze
+
+    // Snip runtime state (audio thread only).
+    float snipSilenceSamples = 0.f;
+    bool  snipFrozen = false;
 
     TakeModule();
     void process(const ProcessArgs& args) override;
