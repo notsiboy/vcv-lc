@@ -128,7 +128,7 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
             baseFS = fontSize * headingScale(b.meta);
         } else if (b.type == journal::BLOCK_BULLET) {
             depthPad = (float)b.meta * INDENT_PX;
-            markerText = "•  ";
+            markerText = "-  ";
         } else if (b.type == journal::BLOCK_ORDERED) {
             int d = b.meta > 8 ? 8 : b.meta;
             for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
