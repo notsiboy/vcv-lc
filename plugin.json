@@ -48,6 +48,12 @@
       "name": "capture",
       "description": "Two-button export: one-click PNG snapshot of the visible rack, and a scan button that writes a markdown dependency inventory (plugins, versions, module counts) for sharing.",
       "tags": ["Utility", "Visual"]
+    },
+    {
+      "slug": "grab2",
+      "name": "grab 2",
+      "description": "Combined recorder. Auto-triggered one-shot (grab), retrospective rolling buffer (take), silence-gated ring (snip), plus a big rec button — short click to force-record, long click to save take.",
+      "tags": ["Recording", "Utility"]
     }
   ]
 }

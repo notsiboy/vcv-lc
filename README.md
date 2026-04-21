@@ -4,6 +4,31 @@ Quality-of-life modules for VCV Rack 2. Minimal panels, thoughtful defaults, and
 
 ## Modules
 
+### grab 2
+
+One recorder, every mode. Builds on `grab` (auto-triggered one-shot) and `take` (rolling retrospective buffer), stitches them into a single 4 HP panel, and adds a few tricks neither has alone. Both DSP paths run off one shared stereo input pair.
+
+**Mode cycle** — the top LED cycles three modes. Click acts on a 2-second delay, softly flashing the pending colour, so an accidental click can't trip a one-shot mid-jam; cycle further during the countdown or wait for the commit.
+
+- **off** — no automation; you drive recording manually
+- **grab** (yellow) — auto-triggered one-shot. Opens a take on signal, closes on silence
+- **snip** (pink) — silence-gated rolling buffer. When audio stops, the ring freezes (the waveform literally stops scrolling) and resumes on the next non-silent sample. Saves come out with quiet stretches elided, no editor required
+
+**Rec button** — big dual-action centre button.
+- Short click → toggles a manual force-record. Light turns red while recording (whether manual or mode-triggered)
+- Long click (≥ 450 ms) → saves a take from the rolling buffer. Amber flash on fire, plus a hold-progress amber ramp so you know when it's about to trigger
+- Outer ring goes red in sync with the LED core
+
+**Peak meters + waveform** — L peak column on the left, take's vertical voice-memos waveform in the middle, R peak column on the right. A mono source lights both peak columns (signal mirrors into both sides) so it's visually clear you can record with just one cable patched.
+
+**Other conveniences**
+- **Save to sub folder** — one-click toggle that routes saves into `<outputDir>/<patch>_<dd>_<mm>_<yyyy>/`. Flipped off-on later gets a fresh date
+- Separate filename prefixes for grab (`grab_NN.wav`) and take (`take_NN.wav`), shared output dir
+- Mono recording: if only L (or only R) is patched, the file is written as a true mono WAV — not a stereo WAV with duplicate channels
+- All of grab + take + snip settings (threshold, hangover, pre-roll, fade in/out, bit depth, normalise, buffer length, silence threshold…) available in the right-click menu
+
+4 HP. Both standalone `grab` and `take` modules remain available — `grab 2` is the unified flagship.
+
 ### journal
 
 ![journal module](docs/journal.png)
@@ -67,16 +92,27 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 
 ![capture module](docs/capture.png)
 
-One-click PNG snapshot of the rack. Fills a long-standing community gap — the only built-in path was a CLI-only `--screenshot` flag on the Rack binary.
+Two exports off one panel: **capture** takes a PNG of the rack, **scan** writes a markdown dependency inventory of the current patch. Fills two long-standing community gaps — the only built-in PNG path was a CLI-only `--screenshot` flag, and Rack buries plugin dependencies in the patch JSON as slugs only.
 
-- Shutter-style button, camera lens aesthetic; amber flash on successful save
+**capture** — one-click PNG of what's on screen
+
+- Amber flash on successful save
 - **Fit whole rack** by default — zooms out to frame every module before the shot, so you don't have to pre-navigate
 - Brief settle delay so module panels redraw at the new zoom before capture (no stale cached renders)
 - Hides its own module during the shot so the capture button isn't in the frame
 - High-DPI native — retina framebuffer → retina PNG
-- Right-click: fit-all / hide-self / viewport-only toggles, filename prefix, output directory + picker + reveal, dark mode
-- Files: `<prefix><NN>.png`, auto-indexed, default dir matches `grab` / `take`
-- 3 HP
+- Files: `<prefix><NN>.png`, auto-indexed
+
+**scan** — markdown dependency report for the current patch
+
+- Walks every module, groups by plugin, writes `plugin name + version + per-module count`
+- Install list with direct links to each plugin's page on library.vcvrack.com so recipients can go straight to the subscribe button
+- Optionally copies the report to the clipboard on press (on by default) — "copied" confirmation fades in under the button
+- Files: `<prefix><NN>.md`, auto-indexed, shares the output directory with capture
+
+Right-click covers both sides: fit-all / hide-self / viewport-only toggles for capture, run-now and clipboard-copy for scan, separate filename prefixes, shared output directory + picker + reveal, dark mode.
+
+3 HP.
 
 ### jump (experimental)
 
