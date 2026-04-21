@@ -127,10 +127,14 @@ void JournalEditor::rebuildRows(NVGcontext* vg) {
         if (b.type == journal::BLOCK_HEADING) {
             baseFS = fontSize * headingScale(b.meta);
         } else if (b.type == journal::BLOCK_BULLET) {
-            depthPad = (float)b.meta * INDENT_PX;
-            markerText = "-  ";
+            int d    = journal::blockDepth(b.meta);
+            int kind = journal::bulletKind(b.meta);
+            if (kind < 0 || kind >= journal::BULLET_MARKER_COUNT) kind = 0;
+            depthPad = (float)d * INDENT_PX;
+            markerText = std::string(journal::BULLET_MARKERS[kind]) + "  ";
         } else if (b.type == journal::BLOCK_ORDERED) {
-            int d = b.meta > 8 ? 8 : b.meta;
+            int d = journal::blockDepth(b.meta);
+            if (d > 8) d = 8;
             for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
             orderedCounter[d]++;
             depthPad = (float)d * INDENT_PX;
@@ -1009,20 +1013,23 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
             return true;
         }
 
-        // Bullet: "-", "*", "+"  — strip the typed marker. It's rendered
-        // from structure (block type + depth), not stored in text.
-        if (beforeSpace.size() == 1
-            && (beforeSpace[0] == '-' || beforeSpace[0] == '*' || beforeSpace[0] == '+')) {
-            pushUndo(EditKind::OTHER);
-            b.type = journal::BLOCK_BULLET;
-            b.meta = 0;
-            int stripLen = p.offset;               // "- " (or "* "/"+ ")
-            b.text.erase(0, stripLen);
-            b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
-            sel = journal::Selection::caret({p.block, 0});
-            invalidateRows();
-            markChanged();
-            return true;
+        // Bullet triggers — any of the six recognised markers. The typed
+        // marker is stripped from text and remembered via the meta "kind"
+        // nibble so render + markdown round-trip preserve what the user
+        // typed (`-`, `*`, `+`, `→`, `—`, `–`).
+        for (int k = 0; k < journal::BULLET_MARKER_COUNT; k++) {
+            if (beforeSpace == journal::BULLET_MARKERS[k]) {
+                pushUndo(EditKind::OTHER);
+                b.type = journal::BLOCK_BULLET;
+                b.meta = journal::makeBulletMeta(0, k);
+                int stripLen = p.offset;    // marker bytes + the space
+                b.text.erase(0, stripLen);
+                b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
+                sel = journal::Selection::caret({p.block, 0});
+                invalidateRows();
+                markChanged();
+                return true;
+            }
         }
 
         // Ordered: "1. ", "42. ", etc. Same strip-the-marker approach; the

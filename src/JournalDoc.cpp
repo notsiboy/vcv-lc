@@ -354,13 +354,15 @@ void indentList(Doc& doc, const Selection& sel, int delta) {
     for (int bi = from; bi <= to && bi < doc.nBlocks(); bi++) {
         Block& b = doc.at(bi);
         if (b.type != BLOCK_BULLET && b.type != BLOCK_ORDERED) continue;
-        int m = (int)b.meta + delta;
-        if (m < 0) {
+        int depth = blockDepth(b.meta) + delta;
+        if (depth < 0) {
             // Shift+Tab past level 0 exits the list (→ paragraph).
             b.type = BLOCK_PARAGRAPH;
             b.meta = 0;
         } else {
-            b.meta = (uint8_t)(m > 8 ? 8 : m);
+            if (depth > 8) depth = 8;
+            // Preserve the marker-kind bits (only meaningful for bullets).
+            b.meta = (uint8_t)((b.meta & 0xF0) | (depth & 0x0F));
         }
     }
 }
@@ -457,13 +459,19 @@ std::string toMarkdown(const Doc& doc) {
                 emitInline(b, out);
                 break;
             }
-            case BLOCK_BULLET:
-                out.append(b.meta * 2, ' ');
-                out.append("- ");
+            case BLOCK_BULLET: {
+                int d    = blockDepth(b.meta);
+                int kind = bulletKind(b.meta);
+                if (kind < 0 || kind >= BULLET_MARKER_COUNT) kind = 0;
+                out.append(d * 2, ' ');
+                out.append(BULLET_MARKERS[kind]);
+                out.push_back(' ');
                 emitInline(b, out);
                 break;
+            }
             case BLOCK_ORDERED: {
-                int d = b.meta > 8 ? 8 : b.meta;
+                int d = blockDepth(b.meta);
+                if (d > 8) d = 8;
                 for (int j = d + 1; j < 9; j++) orderedCounter[j] = 0;
                 orderedCounter[d]++;
                 out.append(d * 2, ' ');
@@ -625,16 +633,30 @@ Doc fromMarkdown(const std::string& md) {
             }
         }
 
-        // Bullet list: -, *, +  — marker is structural, strip it from text.
-        if (body.size() >= 2 && (body[0] == '-' || body[0] == '*' || body[0] == '+')
-            && body[1] == ' ') {
-            b.type = BLOCK_BULLET;
-            b.meta = (uint8_t)std::min(8, indentSpaces / 2);
-            parseInlineInto(body.substr(2), b);
-            doc.blocks.push_back(std::move(b));
-            if (nl == std::string::npos) break;
-            start = nl + 1;
-            continue;
+        // Bullet list: -, *, +, →, —, – — marker kind preserved from text.
+        {
+            int matchedKind = -1;
+            size_t matchedLen = 0;
+            for (int k = 0; k < BULLET_MARKER_COUNT; k++) {
+                const char* m = BULLET_MARKERS[k];
+                size_t mLen = std::strlen(m);
+                if (body.size() >= mLen + 1 &&
+                    body.compare(0, mLen, m) == 0 &&
+                    body[mLen] == ' ') {
+                    matchedKind = k;
+                    matchedLen  = mLen;
+                    break;
+                }
+            }
+            if (matchedKind >= 0) {
+                b.type = BLOCK_BULLET;
+                b.meta = makeBulletMeta(std::min(8, indentSpaces / 2), matchedKind);
+                parseInlineInto(body.substr(matchedLen + 1), b);
+                doc.blocks.push_back(std::move(b));
+                if (nl == std::string::npos) break;
+                start = nl + 1;
+                continue;
+            }
         }
 
         // Ordered list: N.  — marker stripped; display number is derived.
