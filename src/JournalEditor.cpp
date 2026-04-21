@@ -1017,11 +1017,15 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
         // marker is stripped from text and remembered via the meta "kind"
         // nibble so render + markdown round-trip preserve what the user
         // typed (`-`, `*`, `+`, `→`, `—`, `–`).
+        //
+        // New lists auto-indent to depth 1 for visual breathing room; the
+        // user can Shift+Tab once to bring the list flush with the margin,
+        // and a second Shift+Tab exits the list entirely.
         for (int k = 0; k < journal::BULLET_MARKER_COUNT; k++) {
             if (beforeSpace == journal::BULLET_MARKERS[k]) {
                 pushUndo(EditKind::OTHER);
                 b.type = journal::BLOCK_BULLET;
-                b.meta = journal::makeBulletMeta(0, k);
+                b.meta = journal::makeBulletMeta(1, k);
                 int stripLen = p.offset;    // marker bytes + the space
                 b.text.erase(0, stripLen);
                 b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
@@ -1042,7 +1046,7 @@ bool JournalEditor::maybeApplyTriggers(char lastChar) {
             if (allDigits) {
                 pushUndo(EditKind::OTHER);
                 b.type = journal::BLOCK_ORDERED;
-                b.meta = 0;
+                b.meta = 1;        // auto-indent one level, same as bullet
                 int stripLen = p.offset;           // digits + "." + " "
                 b.text.erase(0, stripLen);
                 b.marks.erase(b.marks.begin(), b.marks.begin() + stripLen);
