@@ -56,6 +56,16 @@ static int wordBoundaryRight(const std::string& s, int i) {
     return i;
 }
 
+// Right edge of the word containing `i` — unlike wordBoundaryRight this
+// trims off the trailing non-word run so a word select doesn't include the
+// space after it.
+static int wordEndAt(const std::string& s, int i) {
+    int r = wordBoundaryRight(s, i);
+    while (r > i && r > 0 && !isWordChar(s, r - 1))
+        r = journal::utf8Prev(s, r);
+    return r;
+}
+
 // ─── JournalEditor ──────────────────────────────────────────────────────────
 
 JournalEditor::JournalEditor() {
@@ -454,30 +464,44 @@ void JournalEditor::onButton(const event::Button& e) {
         lastClickPos = e.pos;
 
         if (hasShift(e.mods)) {
+            // Shift-click extends the existing selection; keep the current
+            // dragMode so shift-drag behaves consistently.
             sel.head = p;
         } else if (clickStreak >= 3) {
-            // Triple-click: select whole block.
-            sel.anchor = {p.block, 0};
-            sel.head   = {p.block, doc.at(p.block).length()};
+            // Triple-click: whole block. Pivot is the block bounds — drag
+            // snaps selection to whole blocks.
+            pivotFrom = {p.block, 0};
+            pivotTo   = {p.block, doc.at(p.block).length()};
+            sel.anchor = pivotFrom;
+            sel.head   = pivotTo;
+            dragMode = DragMode::BLOCK;
         } else if (clickStreak == 2) {
-            // Double-click: select word at click.
+            // Double-click: select word at click. Pivot is that word — drag
+            // snaps selection to word boundaries.
             const journal::Block& b = doc.at(p.block);
-            int a = wordBoundaryLeft(b.text, p.offset);
-            int bEnd = wordBoundaryRight(b.text, p.offset);
-            // wordBoundaryRight actually advances past trailing non-word chars;
-            // trim that back so we select just the word itself.
-            while (bEnd > p.offset && bEnd > 0 && !isWordChar(b.text, bEnd - 1))
-                bEnd = journal::utf8Prev(b.text, bEnd);
-            sel.anchor = {p.block, a};
-            sel.head   = {p.block, bEnd};
+            int wStart = wordBoundaryLeft(b.text, p.offset);
+            int wEnd   = wordEndAt(b.text, p.offset);
+            pivotFrom = {p.block, wStart};
+            pivotTo   = {p.block, wEnd};
+            sel.anchor = pivotFrom;
+            sel.head   = pivotTo;
+            dragMode = DragMode::WORD;
         } else {
             sel = journal::Selection::caret(p);
+            pivotFrom = pivotTo = p;
+            dragMode = DragMode::CARET;
         }
         hasPendingMarks = false;
         preferredX = -1.f;
         lastCursorT = rack::system::getTime();
         e.consume(this);
     }
+}
+
+// Order two Pos values — returns true if a comes strictly before b.
+static bool posLess(const journal::Pos& a, const journal::Pos& b) {
+    if (a.block != b.block) return a.block < b.block;
+    return a.offset < b.offset;
 }
 
 void JournalEditor::onDragHover(const event::DragHover& e) {
@@ -487,7 +511,53 @@ void JournalEditor::onDragHover(const event::DragHover& e) {
     NVGcontext* vg = APP->window->vg;
     if (rowsDirty) rebuildRows(vg);
     journal::Pos p = posFromLocal(vg, e.pos);
-    sel.head = doc.clampPos(p);
+    p = doc.clampPos(p);
+
+    // Moving far from the original press invalidates the click streak so
+    // a click after this drag isn't misread as a double / triple.
+    if (e.pos.minus(lastClickPos).norm() > 8.f) lastClickT = -1.0;
+
+    switch (dragMode) {
+        case DragMode::CARET:
+            sel.head = p;
+            break;
+
+        case DragMode::WORD: {
+            const journal::Block& b = doc.at(p.block);
+            int wStart = wordBoundaryLeft(b.text, p.offset);
+            int wEnd   = wordEndAt(b.text, p.offset);
+            journal::Pos pw_start{p.block, wStart};
+            journal::Pos pw_end  {p.block, wEnd};
+            if (posLess(p, pivotFrom)) {
+                // Pointer is left of pivot → anchor = pivot end, head = word start.
+                sel.anchor = pivotTo;
+                sel.head   = pw_start;
+            } else if (posLess(pivotTo, p)) {
+                sel.anchor = pivotFrom;
+                sel.head   = pw_end;
+            } else {
+                sel.anchor = pivotFrom;
+                sel.head   = pivotTo;
+            }
+            break;
+        }
+
+        case DragMode::BLOCK: {
+            int b = p.block;
+            if (b < pivotFrom.block) {
+                sel.anchor = pivotTo;
+                sel.head   = {b, 0};
+            } else if (b > pivotTo.block) {
+                sel.anchor = pivotFrom;
+                sel.head   = {b, doc.at(b).length()};
+            } else {
+                sel.anchor = pivotFrom;
+                sel.head   = pivotTo;
+            }
+            break;
+        }
+    }
+
     hasPendingMarks = false;
     preferredX = -1.f;
     lastCursorT = rack::system::getTime();

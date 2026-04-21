@@ -93,6 +93,15 @@ struct JournalEditor : widget::OpaqueWidget {
     int    clickStreak  = 0;
     math::Vec lastClickPos;
 
+    // Drag selection mode: which granularity the mouse-drag snaps to.
+    // Set from the triggering click's clickStreak on mouse-down and used by
+    // onDragHover to extend the selection around the original "pivot" range
+    // rather than freely re-anchoring on every pixel.
+    enum class DragMode : uint8_t { CARET, WORD, BLOCK };
+    DragMode     dragMode  = DragMode::CARET;
+    journal::Pos pivotFrom{0, 0};
+    journal::Pos pivotTo{0, 0};
+
     // ── Public API ──
     void setMarkdown(const std::string& md);
     std::string getMarkdown() const { return journal::toMarkdown(doc); }
