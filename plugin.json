@@ -42,6 +42,12 @@
       "name": "take",
       "description": "Session-aware recorder. Rolls a continuous buffer of the last N seconds; click save to capture retroactively. Voice-memos style vertical waveform.",
       "tags": ["Recording", "Utility"]
+    },
+    {
+      "slug": "capture",
+      "name": "capture",
+      "description": "One-click PNG snapshot of the visible rack. High-DPI native, hides itself during the shot so the capture button doesn't appear in the screenshot.",
+      "tags": ["Utility", "Visual"]
     }
   ]
 }

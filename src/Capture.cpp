@@ -1,0 +1,451 @@
+#include "Capture.hpp"
+#include "Theme.hpp"
+#include "plugin.hpp"
+
+#include <GL/glew.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <dirent.h>
+#include <osdialog.h>
+#include <string>
+#include <sys/stat.h>
+#include <thread>
+#include <vector>
+
+// Number of frames we wait between changing the view (fit-all zoom) and
+// reading pixels. One frame is enough for widgets that redraw immediately,
+// but plenty of third-party modules cache panels in framebuffer widgets that
+// only re-render after a few step/draw ticks. At 60 fps, 18 frames ≈ 300 ms.
+static constexpr int SETTLE_FRAMES = 18;
+
+// ─── Module ─────────────────────────────────────────────────────────────────
+
+CaptureModule::CaptureModule() {
+    config(0, 0, 0, 0);
+}
+
+json_t* CaptureModule::dataToJson() {
+    json_t* r = json_object();
+    json_object_set_new(r, "prefix",       json_string(prefix.c_str()));
+    json_object_set_new(r, "outputDir",    json_string(outputDir.c_str()));
+    json_object_set_new(r, "hideSelf",     json_boolean(hideSelf));
+    json_object_set_new(r, "viewportOnly", json_boolean(viewportOnly));
+    json_object_set_new(r, "fitAll",       json_boolean(fitAll));
+    return r;
+}
+
+void CaptureModule::dataFromJson(json_t* root) {
+    if (json_t* j = json_object_get(root, "prefix"))       prefix       = json_string_value(j);
+    if (json_t* j = json_object_get(root, "outputDir"))    outputDir    = json_string_value(j);
+    if (json_t* j = json_object_get(root, "hideSelf"))     hideSelf     = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "viewportOnly")) viewportOnly = json_boolean_value(j);
+    if (json_t* j = json_object_get(root, "fitAll"))       fitAll       = json_boolean_value(j);
+}
+
+std::string CaptureModule::resolveOutputDir() const {
+    if (outputDir.empty()) return asset::plugin(pluginInstance, "test");
+    if (outputDir[0] == '/' || (outputDir.size() > 1 && outputDir[1] == ':'))
+        return outputDir;
+    return asset::plugin(pluginInstance, outputDir);
+}
+
+int CaptureModule::scanNextIndex(const std::string& dir) const {
+    std::string pfx = prefix.empty() ? std::string("capture_") : prefix;
+    int maxN = 0;
+    DIR* d = opendir(dir.c_str());
+    if (!d) return 1;
+    while (dirent* ent = readdir(d)) {
+        std::string name = ent->d_name;
+        if (name.size() < pfx.size() + 4) continue;
+        if (name.compare(0, pfx.size(), pfx) != 0) continue;
+        size_t dot = name.rfind('.');
+        if (dot == std::string::npos) continue;
+        std::string ext = name.substr(dot);
+        if (ext != ".png" && ext != ".PNG") continue;
+        std::string numStr = name.substr(pfx.size(), dot - pfx.size());
+        if (numStr.empty()) continue;
+        bool allDigits = true;
+        for (char c : numStr) if (!std::isdigit((unsigned char)c)) { allDigits = false; break; }
+        if (!allDigits) continue;
+        int n = std::atoi(numStr.c_str());
+        if (n > maxN) maxN = n;
+    }
+    closedir(d);
+    return maxN + 1;
+}
+
+// ─── Writer thread ──────────────────────────────────────────────────────────
+
+namespace {
+
+struct CaptureJob {
+    std::vector<uint8_t> pixels;   // RGBA, top-down after vertical flip
+    int w = 0;
+    int h = 0;
+    std::string path;
+};
+
+void writePng(CaptureJob* job) {
+    if (!job->pixels.empty() && job->w > 0 && job->h > 0) {
+        stbi_write_png(job->path.c_str(), job->w, job->h, 4,
+                       job->pixels.data(), job->w * 4);
+    }
+    delete job;
+}
+
+} // namespace
+
+// ─── Widget ─────────────────────────────────────────────────────────────────
+
+namespace {
+
+struct CaptureBackground : widget::Widget {
+    void draw(const DrawArgs& args) override {
+        bool dark = lc::theme.dark;
+        nvgBeginPath(args.vg);
+        nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
+        nvgFillColor(args.vg, dark ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
+        nvgFill(args.vg);
+    }
+};
+
+struct CaptureLogo : widget::Widget {
+    std::string path, darkPath;
+    void draw(const DrawArgs& args) override {
+        bool dark = lc::theme.dark;
+        std::string use = (dark && !darkPath.empty()) ? darkPath : path;
+        auto img = APP->window->loadImage(use);
+        if (!img || img->handle < 0) return;
+        NVGpaint p = nvgImagePattern(args.vg, 0, 0, box.size.x, box.size.y, 0, img->handle, 1.f);
+        nvgBeginPath(args.vg);
+        nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
+        nvgFillPaint(args.vg, p);
+        nvgFill(args.vg);
+    }
+};
+
+struct CaptureLabel : widget::Widget {
+    std::string text;
+    float size = 7.f;
+    void draw(const DrawArgs& args) override {
+        auto font = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
+        if (!font || !font->handle) return;
+        nvgFontFaceId(args.vg, font->handle);
+        nvgFontSize(args.vg, size);
+        nvgTextLetterSpacing(args.vg, 0.2f);
+        nvgFillColor(args.vg, lc::theme.dark ? nvgRGB(230, 230, 230) : nvgRGB(26, 26, 26));
+        nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
+        nvgText(args.vg, box.size.x / 2.f, 0.f, text.c_str(), NULL);
+    }
+};
+
+// Shutter-style button. Dark outer ring, white-ish inner disc. Amber flash
+// after a successful capture.
+struct ShutterButton : widget::OpaqueWidget {
+    CaptureModule* cm = nullptr;
+
+    void draw(const DrawArgs& args) override {
+        bool dark = lc::theme.dark;
+        float cx = box.size.x / 2.f;
+        float cy = box.size.y / 2.f;
+        float rOuter = std::min(cx, cy) - 0.5f;
+        float rRing  = rOuter * 0.85f;
+        float rCore  = rOuter * 0.60f;
+
+        NVGcolor rim      = dark ? nvgRGB(40, 40, 40)  : nvgRGB(255, 255, 255);
+        NVGcolor rimEdge  = dark ? nvgRGB(90, 90, 90)  : nvgRGB(180, 180, 180);
+        NVGcolor ring     = dark ? nvgRGB(20, 20, 20)  : nvgRGB(60, 60, 60);
+        NVGcolor core     = dark ? nvgRGB(225, 225, 225) : nvgRGB(245, 245, 245);
+        NVGcolor flash    = nvgRGB(240, 150, 40);
+
+        double now = rack::system::getTime();
+        double t0  = cm ? cm->flashT.load(std::memory_order_relaxed) : -1.0;
+        float  a   = 0.f;
+        if (t0 > 0 && now - t0 < 0.6) a = 1.f - (float)((now - t0) / 0.6);
+
+        // Outer bezel
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rOuter);
+        nvgFillColor(args.vg, rim); nvgFill(args.vg);
+        nvgStrokeColor(args.vg, rimEdge); nvgStrokeWidth(args.vg, 0.6f); nvgStroke(args.vg);
+
+        // Dark ring (the camera-lens look)
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rRing);
+        nvgFillColor(args.vg, ring); nvgFill(args.vg);
+
+        // White-ish core, blended to amber when flashing
+        NVGcolor c = core;
+        if (a > 0.f) {
+            c.r = core.r + (flash.r - core.r) * a;
+            c.g = core.g + (flash.g - core.g) * a;
+            c.b = core.b + (flash.b - core.b) * a;
+        }
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rCore);
+        nvgFillColor(args.vg, c); nvgFill(args.vg);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1 && cm) {
+            double now = rack::system::getTime();
+            double t0  = cm->flashT.load(std::memory_order_relaxed);
+            if (t0 > 0 && now - t0 < 0.6) {
+                float a = 1.f - (float)((now - t0) / 0.6);
+                float cx = box.size.x / 2.f;
+                float cy = box.size.y / 2.f;
+                float r  = std::min(cx, cy);
+                NVGcolor c = nvgRGB(240, 150, 40);
+                NVGpaint glow = nvgRadialGradient(args.vg, cx, cy, r * 0.6f, r * 2.8f,
+                    nvgRGBAf(c.r, c.g, c.b, 0.45f * a),
+                    nvgRGBAf(c.r, c.g, c.b, 0.f));
+                nvgBeginPath(args.vg);
+                nvgRect(args.vg, -r * 2.5f, -r * 2.5f, box.size.x + r * 5.f, box.size.y + r * 5.f);
+                nvgFillPaint(args.vg, glow);
+                nvgFill(args.vg);
+            }
+        }
+        Widget::drawLayer(args, layer);
+    }
+
+    void onButton(const event::Button& e) override {
+        if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && cm) {
+            if (cm->stage.load() == CaptureModule::IDLE) {
+                // Fit-all: reframe now; leave the view like this after the
+                // shot (no restore — user asked to stay zoomed out).
+                if (cm->fitAll && APP && APP->scene && APP->scene->rackScroll)
+                    APP->scene->rackScroll->zoomToModules();
+
+                // Enter SETTLE — give the rack a window of frames to let
+                // cached module panels (framebuffer widgets) redraw at the
+                // new zoom before we take the shot.
+                cm->settleCountdown.store(SETTLE_FRAMES);
+                cm->stage.store(CaptureModule::SETTLE);
+            }
+            e.consume(this);
+            return;
+        }
+        OpaqueWidget::onButton(e);
+    }
+};
+
+} // namespace
+
+CaptureWidget::CaptureWidget(CaptureModule* module) {
+    setModule(module);
+    cm = module;
+    box.size = math::Vec(RACK_GRID_WIDTH * 3, RACK_GRID_HEIGHT);
+
+    CaptureBackground* bg = new CaptureBackground;
+    bg->box.size = box.size;
+    addChild(bg);
+
+    float screwX = (box.size.x - RACK_GRID_WIDTH) / 2.f;
+    addChild(createWidget<ScrewBlack>(math::Vec(screwX, 0)));
+    addChild(createWidget<ScrewBlack>(math::Vec(screwX, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+
+    app::PanelBorder* border = new app::PanelBorder;
+    border->box.size = box.size;
+    addChild(border);
+
+    {
+        CaptureLabel* l = new CaptureLabel;
+        l->text = "capture";
+        l->box.size = math::Vec(box.size.x, mm2px(3.f));
+        l->box.pos  = math::Vec(0, mm2px(9.f));
+        addChild(l);
+    }
+
+    // Shutter button — larger than the other toggles so it reads as a camera.
+    {
+        ShutterButton* b = new ShutterButton;
+        b->cm = module;
+        b->box.size = mm2px(math::Vec(7.f, 7.f));
+        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f, mm2px(16.f));
+        addChild(b);
+    }
+
+    // Logo at bottom
+    {
+        CaptureLogo* lg = new CaptureLogo;
+        lg->path     = asset::plugin(pluginInstance, "res/lc-icon-new.png");
+        lg->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
+        lg->box.size = mm2px(math::Vec(9.f, 9.f));
+        lg->box.pos  = math::Vec((box.size.x - lg->box.size.x) / 2.f,
+                                 mm2px(128.5f - 8.f - 9.f));
+        addChild(lg);
+    }
+}
+
+// Per-frame state machine:
+//   click  → SETTLE (count down N frames while the new view paints)
+//   SETTLE → ARMED  (once countdown hits 0)
+//   draw of ARMED → hide self, promote to SHOOT for next frame
+//   step sees SHOOT → read front buffer, IDLE, flash
+//
+// step() runs before draw() every frame, so the ARMED → SHOOT transition
+// lives inside draw() — if we moved it into step, draw would never see
+// ARMED and the hide wouldn't take effect.
+void CaptureWidget::step() {
+    ModuleWidget::step();
+    if (!cm) return;
+    int s = cm->stage.load(std::memory_order_relaxed);
+    if (s == CaptureModule::SETTLE) {
+        int c = cm->settleCountdown.load(std::memory_order_relaxed);
+        if (c <= 0) cm->stage.store(CaptureModule::ARMED);
+        else        cm->settleCountdown.store(c - 1);
+    } else if (s == CaptureModule::SHOOT) {
+        performCapture();
+        cm->stage.store(CaptureModule::IDLE);
+        cm->flashT.store(rack::system::getTime(), std::memory_order_relaxed);
+    }
+}
+
+void CaptureWidget::draw(const DrawArgs& args) {
+    if (cm) {
+        int s = cm->stage.load(std::memory_order_relaxed);
+        if (s == CaptureModule::ARMED) {
+            cm->stage.store(CaptureModule::SHOOT);
+            if (cm->hideSelf) return;
+        }
+    }
+    ModuleWidget::draw(args);
+}
+
+// ─── The actual screen grab ─────────────────────────────────────────────────
+
+void CaptureWidget::performCapture() {
+    if (!cm || !APP || !APP->window || !APP->window->win) return;
+
+    GLFWwindow* win = APP->window->win;
+    int fbW = 0, fbH = 0;
+    glfwGetFramebufferSize(win, &fbW, &fbH);
+    if (fbW <= 0 || fbH <= 0) return;
+
+    int winW = 0, winH = 0;
+    glfwGetWindowSize(win, &winW, &winH);
+    float rx = (winW > 0) ? (float)fbW / (float)winW : 1.f;
+    float ry = (winH > 0) ? (float)fbH / (float)winH : 1.f;
+
+    // Capture region in framebuffer pixels.
+    int px = 0, py = 0, pw = fbW, ph = fbH;
+    if (cm->viewportOnly && APP->scene && APP->scene->rackScroll) {
+        math::Rect r = APP->scene->rackScroll->box;
+        px = (int)std::floor(r.pos.x  * rx);
+        py = (int)std::floor(r.pos.y  * ry);
+        pw = (int)std::ceil (r.size.x * rx);
+        ph = (int)std::ceil (r.size.y * ry);
+    }
+    // Clamp to framebuffer bounds.
+    if (px < 0) { pw += px; px = 0; }
+    if (py < 0) { ph += py; py = 0; }
+    if (px + pw > fbW) pw = fbW - px;
+    if (py + ph > fbH) ph = fbH - py;
+    if (pw <= 0 || ph <= 0) return;
+
+    // glReadPixels uses y=0 at the bottom of the framebuffer; Rack widget
+    // coords have y=0 at the top. Convert.
+    int glY = fbH - (py + ph);
+
+    // Read. GL_FRONT gives us the currently-displayed frame, which is
+    // exactly what the user's looking at.
+    std::vector<uint8_t> raw(pw * ph * 4);
+    GLint prevBuffer = GL_BACK;
+    glGetIntegerv(GL_READ_BUFFER, &prevBuffer);
+    glReadBuffer(GL_FRONT);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(px, glY, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, raw.data());
+    glReadBuffer(prevBuffer);
+
+    // Flip rows so the PNG is top-down.
+    CaptureJob* job = new CaptureJob;
+    job->w = pw;
+    job->h = ph;
+    job->pixels.resize(pw * ph * 4);
+    for (int y = 0; y < ph; y++) {
+        std::memcpy(job->pixels.data() + y * pw * 4,
+                    raw.data() + (ph - 1 - y) * pw * 4,
+                    pw * 4);
+    }
+
+    // Build output path.
+    std::string dir = cm->resolveOutputDir();
+    rack::system::createDirectories(dir);
+    int idx = cm->scanNextIndex(dir);
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s%02d.png",
+                  cm->prefix.empty() ? "capture_" : cm->prefix.c_str(), idx);
+    job->path = dir + "/" + name;
+
+    std::thread(&writePng, job).detach();
+}
+
+// ─── Context menu ───────────────────────────────────────────────────────────
+
+namespace {
+
+struct PrefixField : ui::TextField {
+    CaptureModule* cm = nullptr;
+    PrefixField() { box.size.x = 200.f; }
+    void onChange(const event::Change& e) override {
+        ui::TextField::onChange(e);
+        if (cm) cm->prefix = text;
+    }
+};
+
+struct DirField : ui::TextField {
+    CaptureModule* cm = nullptr;
+    DirField() { box.size.x = 200.f; }
+    void onChange(const event::Change& e) override {
+        ui::TextField::onChange(e);
+        if (cm) cm->outputDir = text;
+    }
+};
+
+} // namespace
+
+void CaptureWidget::appendContextMenu(Menu* menu) {
+    CaptureModule* m = dynamic_cast<CaptureModule*>(module);
+    if (!m) return;
+
+    menu->addChild(new MenuSeparator);
+
+    menu->addChild(createBoolPtrMenuItem("Fit whole rack (zoom out before shot)", "", &m->fitAll));
+    menu->addChild(createBoolPtrMenuItem("Hide this module during capture", "", &m->hideSelf));
+    menu->addChild(createBoolPtrMenuItem("Rack viewport only (off = whole window)", "", &m->viewportOnly));
+
+    menu->addChild(new MenuSeparator);
+
+    menu->addChild(createMenuLabel("Filename prefix"));
+    PrefixField* pf = new PrefixField; pf->cm = m; pf->text = m->prefix;
+    menu->addChild(pf);
+
+    menu->addChild(createMenuLabel("Output directory"));
+    DirField* df = new DirField; df->cm = m; df->text = m->outputDir;
+    menu->addChild(df);
+
+    menu->addChild(createMenuItem("Choose folder…", "", [m]() {
+        char* p = osdialog_file(OSDIALOG_OPEN_DIR, nullptr, nullptr, nullptr);
+        if (p) { m->outputDir = p; std::free(p); }
+    }));
+    menu->addChild(createMenuItem("Reveal output folder", "", [m]() {
+        std::string d = m->resolveOutputDir();
+        rack::system::createDirectories(d);
+        rack::system::openDirectory(d);
+    }));
+
+    menu->addChild(new MenuSeparator);
+    menu->addChild(createMenuItem("Dark mode (shared)",
+        CHECKMARK(lc::theme.dark), []() {
+            lc::theme.dark = !lc::theme.dark;
+            lc::saveTheme();
+        }));
+}
+
+Model* modelCapture = createModel<CaptureModule, CaptureWidget>("capture");
