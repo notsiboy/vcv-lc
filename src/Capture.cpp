@@ -437,6 +437,35 @@ struct ScanRunButton : widget::OpaqueWidget {
     }
 };
 
+// Short-lived "copied" confirmation — fades in + out under the scan button
+// so the user knows the markdown hit the clipboard (button flash alone
+// doesn't distinguish file-write from clipboard-copy).
+struct CopiedReadout : widget::Widget {
+    CaptureModule* cm = nullptr;
+    static constexpr double VISIBLE_S = 1.6;
+    void draw(const DrawArgs& args) override {
+        if (!cm || !cm->copyClipboard) return;
+        double t0 = cm->scanFlashT.load(std::memory_order_relaxed);
+        if (t0 <= 0) return;
+        double dt = rack::system::getTime() - t0;
+        if (dt > VISIBLE_S) return;
+
+        float a = 1.f;
+        if (dt > VISIBLE_S - 0.4) a = (float)((VISIBLE_S - dt) / 0.4);
+        a = std::max(0.f, std::min(1.f, a));
+
+        auto font = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
+        if (!font || !font->handle) return;
+        nvgFontFaceId(args.vg, font->handle);
+        nvgFontSize(args.vg, 6.f);
+        nvgTextLetterSpacing(args.vg, 0.3f);
+        NVGcolor c = lc::theme.dark ? nvgRGB(230, 230, 230) : nvgRGB(26, 26, 26);
+        nvgFillColor(args.vg, nvgRGBAf(c.r, c.g, c.b, a));
+        nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
+        nvgText(args.vg, box.size.x / 2.f, 0.f, "copied", NULL);
+    }
+};
+
 } // namespace
 
 CaptureWidget::CaptureWidget(CaptureModule* module) {
@@ -489,6 +518,16 @@ CaptureWidget::CaptureWidget(CaptureModule* module) {
         b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f,
                                 mm2px(scanAnchorMM));
         addChild(b);
+    }
+
+    // "copied" readout, tucked right under the scan button in the narrow
+    // gap before the logo.
+    {
+        CopiedReadout* r = new CopiedReadout;
+        r->cm = module;
+        r->box.size = math::Vec(box.size.x, mm2px(3.f));
+        r->box.pos  = math::Vec(0, mm2px(scanAnchorMM + 5.2f));
+        addChild(r);
     }
 
     // Logo at bottom
