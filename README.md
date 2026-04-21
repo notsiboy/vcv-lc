@@ -1,6 +1,6 @@
-# Lux Cache — VCV Rack modules
+# qol — by Lux Cache
 
-A collection of utility and visual modules for VCV Rack 2. Minimal panels, thoughtful defaults, no signal path — everything lives outside of audio.
+Quality-of-life modules for VCV Rack 2. Minimal panels, thoughtful defaults, and workflow tools that live outside the signal path.
 
 ## Modules
 
@@ -62,6 +62,21 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 - Auto-named `<prefix><NN>.wav` files, asynchronous writer thread so the audio path never touches disk
 - Right-click: buffer length, fade in/out, normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory + picker, reveal folder
 - 4 HP
+
+### capture
+
+![capture module](docs/capture.png)
+
+One-click PNG snapshot of the rack. Fills a long-standing community gap — the only built-in path was a CLI-only `--screenshot` flag on the Rack binary.
+
+- Shutter-style button, camera lens aesthetic; amber flash on successful save
+- **Fit whole rack** by default — zooms out to frame every module before the shot, so you don't have to pre-navigate
+- Brief settle delay so module panels redraw at the new zoom before capture (no stale cached renders)
+- Hides its own module during the shot so the capture button isn't in the frame
+- High-DPI native — retina framebuffer → retina PNG
+- Right-click: fit-all / hide-self / viewport-only toggles, filename prefix, output directory + picker + reveal, dark mode
+- Files: `<prefix><NN>.png`, auto-indexed, default dir matches `grab` / `take`
+- 3 HP
 
 ### jump (experimental)
 
