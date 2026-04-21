@@ -148,8 +148,8 @@ struct CaptureLabel : widget::Widget {
     }
 };
 
-// Shutter-style button. Dark outer ring, white-ish inner disc. Amber flash
-// after a successful capture.
+// Matches the Take module's SaveButton look — bezel, inner face, grey core
+// dot that flashes amber on a successful capture.
 struct ShutterButton : widget::OpaqueWidget {
     CaptureModule* cm = nullptr;
 
@@ -158,38 +158,38 @@ struct ShutterButton : widget::OpaqueWidget {
         float cx = box.size.x / 2.f;
         float cy = box.size.y / 2.f;
         float rOuter = std::min(cx, cy) - 0.5f;
-        float rRing  = rOuter * 0.85f;
-        float rCore  = rOuter * 0.60f;
+        float rInner = rOuter * 0.78f;
+        float rCore  = rOuter * 0.50f;
 
         NVGcolor rim      = dark ? nvgRGB(40, 40, 40)  : nvgRGB(255, 255, 255);
         NVGcolor rimEdge  = dark ? nvgRGB(90, 90, 90)  : nvgRGB(180, 180, 180);
-        NVGcolor ring     = dark ? nvgRGB(20, 20, 20)  : nvgRGB(60, 60, 60);
-        NVGcolor core     = dark ? nvgRGB(225, 225, 225) : nvgRGB(245, 245, 245);
+        NVGcolor face     = dark ? nvgRGB(55, 55, 55)  : nvgRGB(240, 240, 240);
+        NVGcolor faceEdge = dark ? nvgRGB(75, 75, 75)  : nvgRGB(210, 210, 210);
+        NVGcolor idle     = dark ? nvgRGB(95, 95, 95)  : nvgRGB(170, 170, 170);
         NVGcolor flash    = nvgRGB(240, 150, 40);
 
         double now = rack::system::getTime();
         double t0  = cm ? cm->flashT.load(std::memory_order_relaxed) : -1.0;
-        float  a   = 0.f;
-        if (t0 > 0 && now - t0 < 0.6) a = 1.f - (float)((now - t0) / 0.6);
+        float flashA = 0.f;
+        if (t0 > 0 && now - t0 < 0.6) flashA = 1.f - (float)((now - t0) / 0.6);
 
-        // Outer bezel
         nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rOuter);
         nvgFillColor(args.vg, rim); nvgFill(args.vg);
         nvgStrokeColor(args.vg, rimEdge); nvgStrokeWidth(args.vg, 0.6f); nvgStroke(args.vg);
 
-        // Dark ring (the camera-lens look)
-        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rRing);
-        nvgFillColor(args.vg, ring); nvgFill(args.vg);
+        nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rInner);
+        nvgFillColor(args.vg, face); nvgFill(args.vg);
+        nvgStrokeColor(args.vg, faceEdge); nvgStrokeWidth(args.vg, 0.4f); nvgStroke(args.vg);
 
-        // White-ish core, blended to amber when flashing
-        NVGcolor c = core;
-        if (a > 0.f) {
-            c.r = core.r + (flash.r - core.r) * a;
-            c.g = core.g + (flash.g - core.g) * a;
-            c.b = core.b + (flash.b - core.b) * a;
-        }
+        NVGcolor core;
+        if (flashA > 0.f) {
+            core.r = idle.r + (flash.r - idle.r) * flashA;
+            core.g = idle.g + (flash.g - idle.g) * flashA;
+            core.b = idle.b + (flash.b - idle.b) * flashA;
+            core.a = 1.f;
+        } else core = idle;
         nvgBeginPath(args.vg); nvgCircle(args.vg, cx, cy, rCore);
-        nvgFillColor(args.vg, c); nvgFill(args.vg);
+        nvgFillColor(args.vg, core); nvgFill(args.vg);
     }
 
     void drawLayer(const DrawArgs& args, int layer) override {
@@ -262,12 +262,11 @@ CaptureWidget::CaptureWidget(CaptureModule* module) {
         addChild(l);
     }
 
-    // Shutter button — larger than the other toggles so it reads as a camera.
     {
         ShutterButton* b = new ShutterButton;
         b->cm = module;
-        b->box.size = mm2px(math::Vec(7.f, 7.f));
-        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f, mm2px(16.f));
+        b->box.size = mm2px(math::Vec(5.f, 5.f));
+        b->box.pos  = math::Vec((box.size.x - b->box.size.x) / 2.f, mm2px(14.f));
         addChild(b);
     }
 
