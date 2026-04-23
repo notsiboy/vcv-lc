@@ -6,6 +6,8 @@ Quality-of-life modules for VCV Rack 2. Minimal panels, thoughtful defaults, and
 
 ### grab 2
 
+![grab 2 module](docs/grab2.png)
+
 One recorder, every mode. Builds on `grab` (auto-triggered one-shot) and `take` (rolling retrospective buffer), stitches them into a single 4 HP panel, and adds a few tricks neither has alone. Both DSP paths run off one shared stereo input pair.
 
 **Mode cycle** — the top LED cycles three modes. Click acts on a 2-second delay, softly flashing the pending colour, so an accidental click can't trip a one-shot mid-jam; cycle further during the countdown or wait for the commit.
@@ -90,6 +92,21 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 - Auto-named `<prefix><NN>.wav` files, asynchronous writer thread so the audio path never touches disk
 - Right-click: buffer length, fade in/out, normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory + picker, reveal folder
 - 4 HP
+
+### qmap
+
+![qmap module](docs/qmap.png)
+
+14 aux CV inputs that touch-map to any parameter in the rack — uMap-style. Arm a slot, click a knob anywhere in the patch, and that knob follows the CV on the matching jack.
+
+- Touch-to-assign uses Rack's own touched-param mechanism: once a slot is armed, the next param you click on another module becomes its target. No dragging cables to phantom inputs.
+- **qmap** master button at the top walks the arming cursor through slots 1 → 14 automatically — hit it once, touch-assign every jack in order without coming back to re-arm.
+- Each slot has its own small arm button above its jack that flashes amber while armed; it glows dimmer once a binding is attached, dark when empty. Right-click a slot button to clear its mapping.
+- Right-click a jack for per-slot **Unipolar (0..10V)** or **Bipolar (-5..5V)** scaling, mapped into the target param's full min..max range.
+- Module context menu lists all 14 mappings with the bound module + param name, plus **Arm all (sequential)** and **Clear all mappings**.
+- Bindings persist across patch save/load via VCV's `ParamHandle` system, so reordering or duplicating target modules doesn't silently break the map.
+
+4 HP, laid out as 7 rows × 2 columns of jacks with arm buttons tucked above each.
 
 ### capture
 

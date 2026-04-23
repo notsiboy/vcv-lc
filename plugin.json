@@ -66,6 +66,15 @@
         "Recording",
         "Utility"
       ]
+    },
+    {
+      "slug": "qmap",
+      "name": "qmap",
+      "description": "Eight aux CV inputs that touch-map to any parameter in the rack. Per-slot unipolar/bipolar, and a master button that walks the arming cursor through all eight for one-shot full-rig assignment.",
+      "tags": [
+        "Controller",
+        "Utility"
+      ]
     }
   ]
 }
