@@ -100,13 +100,45 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 14 aux CV inputs that touch-map to any parameter in the rack — uMap-style. Arm a slot, click a knob anywhere in the patch, and that knob follows the CV on the matching jack.
 
 - Touch-to-assign uses Rack's own touched-param mechanism: once a slot is armed, the next param you click on another module becomes its target. No dragging cables to phantom inputs.
-- **qmap** master button at the top walks the arming cursor through slots 1 → 14 automatically — hit it once, touch-assign every jack in order without coming back to re-arm.
-- Each slot has its own small arm button above its jack that flashes amber while armed; it glows dimmer once a binding is attached, dark when empty. Right-click a slot button to clear its mapping.
-- Right-click a jack for per-slot **Unipolar (0..10V)** or **Bipolar (-5..5V)** scaling, mapped into the target param's full min..max range.
-- Module context menu lists all 14 mappings with the bound module + param name, plus **Arm all (sequential)** and **Clear all mappings**.
+- **qmap** master button at the top walks the arming cursor through slots 1 → 14 automatically — hit it once, touch-assign every jack in order. Clicking it again mid-sweep cancels. Each successful assign pushes an undo entry.
+- Per-slot arm buttons flash amber while armed; when a slot is bound the dot tracks the incoming CV — the LED visibly breathes with whatever is driving the param. Right-click an arm button to clear its mapping.
+- Right-click a jack for per-slot **Unipolar (0..10V) / Bipolar (-5..5V)** polarity plus draggable **Attenuator** (±2×) and **Offset** (±10V) sliders so you can trim or bias a CV without patching an inline scaler.
+- Drop a **qmod** next to this module and every unconnected aux input auto-feeds from the matching qmod output. A centre dot appears on both modules' jacks while the link is active. A real cable always overrides the auto-feed. When flanked by qmods on both sides, a radio in the menu lets you favour left or right.
+- Module context menu: mappings list (click a bound entry to clear, click an empty entry to arm), **Arm all (sequential)**, **Clear all mappings**, **Copy/Paste mappings** to clone a whole bank to another qmap, adjacency status, theme picker.
 - Bindings persist across patch save/load via VCV's `ParamHandle` system, so reordering or duplicating target modules doesn't silently break the map.
 
 4 HP, laid out as 7 rows × 2 columns of jacks with arm buttons tucked above each.
+
+### qmod
+
+![qmod module](docs/qmod.png)
+
+14-channel modulation source with the same layout as qmap — drop them side-by-side and every qmod output lines up with the matching qmap aux input.
+
+**Modes** — the master button at the top cycles five modes, each with its own LED colour. Picking a mode broadcasts it to every slot; per-slot LED buttons can be clicked to diverge so any mix of modes can run on the same bank.
+
+- **Random triggers** (red) — stochastic trigger bursts, each slot fires at its own rate with ±50% jitter
+- **Triggered S+H** (orange) — no internal clock; every trigger input rising edge resamples every slot, VCV Random-style
+- **Smooth random** (cyan, default) — smootherstep-slewed random-target wander
+- **Sample & hold** (purple) — classic free-running S+H at each slot's rate
+- **LFO** (green) — selectable sine / triangle / square / saw
+
+**Stagger** — Ochd-style log-spread of rates from slot 1 (fastest) to slot 14 (slowest). Toggle on/off, and dial the **Stagger spread** slider to tighten or stretch the slow-end multiplier. Turn stagger off and every slot runs at the global rate.
+
+**Global controls** (inline in the right-click menu)
+- **Global rate** — 0.01–10 Hz base speed
+- **Smoothness** — double duty: shapes the random-target slew in smooth-random mode, and acts as a one-pole output slew limiter on S+H / triggered S+H / LFO so step changes glide. Random triggers bypass it so pulses stay crisp.
+
+**Trigger / CV input** — single jack at the top; the right-click menu picks how it's read:
+- **Trigger / resync** — rising edge resets phases, resamples S+H slots, fires random triggers
+- **Gate (run/freeze)** — high = run, low = freeze and hold every output voltage
+- **CV → rate / smoothness / mode** — accepts unipolar or bipolar (±5V) signals; while the cable drives the value, your menu-set base is preserved and restored the moment you unplug
+
+**Per-jack right-click** — output range (unipolar 0..10V / 0..5V / 0..1V, bipolar ±10V / ±5V / ±1V), plus **Attenuator** (±2×) and **Offset** (±10V) for post-range conditioning.
+
+**Other**: per-slot LED brightness tracks each output's CV (triggers flash and decay), **Copy/Paste settings** to clone a whole qmod to another, undo on mode cycles and paste, and a live status line showing whether a qmap is adjacent and which side is auto-feeding. Per-slot state persists in JSON.
+
+4 HP. 14 outputs in 7×2 columns, title + master button + trigger input up top.
 
 ### capture
 

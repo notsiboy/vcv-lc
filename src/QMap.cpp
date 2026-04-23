@@ -1,7 +1,50 @@
 #include "QMap.hpp"
+#include "QMod.hpp"
 #include "Theme.hpp"
+#include "LcPorts.hpp"
 
 #include <componentlibrary.hpp>
+#include <history.hpp>
+#include <ui/Slider.hpp>
+
+// Module-scope clipboard for qmap. Raw JSON captured by dataToJson(); paste
+// replays via dataFromJson(). Kept here (not in a singleton) because VCV
+// plugins share a global but this pattern is well-scoped for a single click
+// copy→paste between qmaps.
+static json_t* g_qmapClipboard = nullptr;
+
+// Coarse-grained undo: snapshot the full module data JSON before a change,
+// snapshot again after, and restore either side by re-running dataFromJson.
+// Heavyweight but simple and correct — works for any state the module
+// already knows how to (de)serialise, including ParamHandle bindings.
+namespace {
+struct QMapJsonAction : history::ModuleAction {
+    json_t* oldJ = nullptr;
+    json_t* newJ = nullptr;
+    ~QMapJsonAction() {
+        if (oldJ) json_decref(oldJ);
+        if (newJ) json_decref(newJ);
+    }
+    void apply(json_t* j) {
+        if (!j) return;
+        rack::engine::Module* m = APP->engine->getModule(moduleId);
+        QMapModule* qm = dynamic_cast<QMapModule*>(m);
+        if (qm) qm->dataFromJson(j);
+    }
+    void undo() override { apply(oldJ); }
+    void redo() override { apply(newJ); }
+};
+}
+
+static void pushQMapJsonAction(QMapModule* qm, json_t* before, const char* name) {
+    if (!qm || !before) { if (before) json_decref(before); return; }
+    QMapJsonAction* a = new QMapJsonAction;
+    a->moduleId = qm->id;
+    a->name = name ? name : "qmap change";
+    a->oldJ = before;
+    a->newJ = qm->dataToJson();
+    APP->history->push(a);
+}
 
 // ─── Module ─────────────────────────────────────────────────────────────────
 
@@ -9,6 +52,8 @@ QMapModule::QMapModule() {
     config(0, NUM_INPUTS, 0, 0);
     for (int i = 0; i < NUM_SLOTS; i++) {
         bipolar[i] = false;
+        attenuator[i] = 1.f;
+        offset[i] = 0.f;
         paramHandles[i].color = nvgRGB(255, 170, 40); // amber highlight on bound params
         paramHandles[i].text = string::f("qmap aux %d", i + 1);
         configInput(AUX_INPUT + i, string::f("Aux %d", i + 1));
@@ -25,18 +70,51 @@ QMapModule::~QMapModule() {
 }
 
 void QMapModule::process(const ProcessArgs& args) {
+    // Auto-assign feed: if a qmod sits immediately to either side, any of our
+    // aux inputs that lack a cable pull from the matching qmod output. A real
+    // cable always wins. When flanked by qmods on both sides, qmodFavour
+    // picks which one drives; with only one qmod adjacent, that side is used
+    // regardless of the favour setting.
+    QModModule* leftQMod = nullptr;
+    QModModule* rightQMod = nullptr;
+    if (leftExpander.module && leftExpander.module->model == modelQMod)
+        leftQMod = static_cast<QModModule*>(leftExpander.module);
+    if (rightExpander.module && rightExpander.module->model == modelQMod)
+        rightQMod = static_cast<QModModule*>(rightExpander.module);
+    QModModule* qmod = nullptr;
+    if (leftQMod && rightQMod) qmod = (qmodFavour == 1) ? rightQMod : leftQMod;
+    else if (leftQMod)         qmod = leftQMod;
+    else if (rightQMod)        qmod = rightQMod;
+
     for (int i = 0; i < NUM_SLOTS; i++) {
+        float v;
+        bool haveSignal = false;
+        if (inputs[AUX_INPUT + i].isConnected()) {
+            v = inputs[AUX_INPUT + i].getVoltage();
+            haveSignal = true;
+        } else if (qmod && i < QModModule::NUM_SLOTS) {
+            v = qmod->outputs[QModModule::MOD_OUTPUT + i].getVoltage();
+            haveSignal = true;
+        } else {
+            v = 0.f;
+        }
+
+        // Attenuate & bias the raw CV before the polarity-aware normalise.
+        if (haveSignal) v = v * attenuator[i] + offset[i];
+
+        // Always refresh the UI-facing level so the arm LEDs track the feed
+        // whether or not a param is currently bound to this slot.
+        float t = bipolar[i]
+            ? math::clamp((v + 5.f) / 10.f, 0.f, 1.f)
+            : math::clamp(v / 10.f, 0.f, 1.f);
+        modLevel[i] = haveSignal ? t : 0.f;
+
         engine::ParamHandle& h = paramHandles[i];
-        if (!h.module) continue;
-        if (!inputs[AUX_INPUT + i].isConnected()) continue;
+        if (!h.module || !haveSignal) continue;
 
         engine::ParamQuantity* pq = h.module->getParamQuantity(h.paramId);
         if (!pq) continue;
 
-        float v = inputs[AUX_INPUT + i].getVoltage();
-        float t = bipolar[i]
-            ? math::clamp((v + 5.f) / 10.f, 0.f, 1.f)
-            : math::clamp(v / 10.f, 0.f, 1.f);
         float lo = pq->getMinValue();
         float hi = pq->getMaxValue();
         pq->setValue(lo + t * (hi - lo));
@@ -69,13 +147,18 @@ json_t* QMapModule::dataToJson() {
         json_object_set_new(s, "moduleId", json_integer(paramHandles[i].moduleId));
         json_object_set_new(s, "paramId", json_integer(paramHandles[i].paramId));
         json_object_set_new(s, "bipolar", json_boolean(bipolar[i]));
+        json_object_set_new(s, "atten", json_real(attenuator[i]));
+        json_object_set_new(s, "offset", json_real(offset[i]));
         json_array_append_new(slotsJ, s);
     }
     json_object_set_new(root, "slots", slotsJ);
+    json_object_set_new(root, "qmodFavour", json_integer(qmodFavour));
     return root;
 }
 
 void QMapModule::dataFromJson(json_t* root) {
+    if (json_t* j = json_object_get(root, "qmodFavour"))
+        qmodFavour = (int)json_integer_value(j);
     json_t* slotsJ = json_object_get(root, "slots");
     if (!slotsJ) return;
     size_t n = std::min((size_t)NUM_SLOTS, json_array_size(slotsJ));
@@ -87,6 +170,10 @@ void QMapModule::dataFromJson(json_t* root) {
         if (json_t* j = json_object_get(s, "moduleId")) mid = json_integer_value(j);
         if (json_t* j = json_object_get(s, "paramId"))  pid = json_integer_value(j);
         if (json_t* j = json_object_get(s, "bipolar"))  bipolar[i] = json_boolean_value(j);
+        attenuator[i] = 1.f;
+        offset[i]     = 0.f;
+        if (json_t* j = json_object_get(s, "atten"))    attenuator[i] = json_real_value(j);
+        if (json_t* j = json_object_get(s, "offset"))   offset[i]     = json_real_value(j);
         APP->engine->updateParamHandle(&paramHandles[i], mid, pid, true);
     }
 }
@@ -206,6 +293,9 @@ struct SlotArmButton : widget::OpaqueWidget {
 
     bool armed() const { return qm && qm->armedSlot == slot; }
     bool bound() const { return qm && qm->paramHandles[slot].module != nullptr; }
+    float level() const {
+        return qm ? math::clamp(qm->modLevel[slot], 0.f, 1.f) : 0.f;
+    }
 
     void draw(const DrawArgs& args) override {
         bool dark = lc::theme.dark;
@@ -213,15 +303,27 @@ struct SlotArmButton : widget::OpaqueWidget {
         if (armed()) {
             drawCenterDot(args.vg, box.size.x, box.size.y, AMBER, true, dark, 0.55f);
         } else if (bound()) {
-            drawCenterDot(args.vg, box.size.x, box.size.y, AMBER, true, dark, 0.30f);
+            // Bound slot: fade the amber dot with the incoming CV so the
+            // LED visibly pulses along with whatever's driving the param.
+            float b = 0.2f + 0.8f * level();
+            NVGcolor tinted = nvgRGBf(AMBER.r * b, AMBER.g * b, AMBER.b * b);
+            drawCenterDot(args.vg, box.size.x, box.size.y, tinted, true, dark, 0.30f);
         } else {
             drawCenterDot(args.vg, box.size.x, box.size.y, AMBER, false, dark, 0.30f);
         }
     }
 
     void drawLayer(const DrawArgs& args, int layer) override {
-        if (layer == 1 && armed()) {
+        if (layer != 1 || !qm) { Widget::drawLayer(args, layer); return; }
+        if (armed()) {
             drawCenterDotGlow(args.vg, box.size.x, box.size.y, AMBER, amberPulse(), 0.55f);
+        } else if (bound()) {
+            // Glow on layer 1 so bright peaks visibly punch through the
+            // dark theme. Stays off when the CV is near its minimum.
+            float a = level();
+            if (a > 0.f) {
+                drawCenterDotGlow(args.vg, box.size.x, box.size.y, AMBER, a, 0.30f);
+            }
         }
         Widget::drawLayer(args, layer);
     }
@@ -267,16 +369,67 @@ struct MasterArmButton : widget::OpaqueWidget {
     void onButton(const event::Button& e) override {
         OpaqueWidget::onButton(e);
         if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
-            qm->advanceArm();
+            // If the button is already in its flashing-amber sequential-arm
+            // state, clicking again cancels the whole mapping pass rather
+            // than advancing to the next slot.
+            if (qm->sequentialArm && qm->armedSlot >= 0) {
+                qm->armedSlot = -1;
+                qm->sequentialArm = false;
+            } else {
+                qm->advanceArm();
+            }
             e.consume(this);
         }
     }
 };
 
-// Aux input port with a per-slot unipolar/bipolar right-click menu.
-struct QMapInputPort : ThemedPJ301MPort {
+// Shared Quantity + Slider helpers so jack menus can expose float params as
+// draggable menu sliders (like VCV's native knob menus).
+struct FloatQuantity : Quantity {
+    float* ptr;
+    std::string label_, unit_;
+    float minV, maxV, defV;
+    int precision;
+    FloatQuantity(float* p, std::string l, std::string u, float mn, float mx, float dv, int pr = 2)
+        : ptr(p), label_(std::move(l)), unit_(std::move(u)), minV(mn), maxV(mx), defV(dv), precision(pr) {}
+    void setValue(float v) override { *ptr = math::clamp(v, minV, maxV); }
+    float getValue() override { return *ptr; }
+    float getMinValue() override { return minV; }
+    float getMaxValue() override { return maxV; }
+    float getDefaultValue() override { return defV; }
+    std::string getLabel() override { return label_; }
+    std::string getUnit() override { return unit_; }
+    int getDisplayPrecision() override { return precision; }
+};
+struct MenuSlider : ui::Slider {
+    MenuSlider(Quantity* q) { quantity = q; box.size.x = 220.f; }
+    ~MenuSlider() { delete quantity; }
+};
+
+// Aux input port with a per-slot unipolar/bipolar right-click menu. Inherits
+// the shared Lux Cache white-ring visual so qmap's inputs match every other
+// LC input jack. When a qmod sits adjacent (either side), we paint an extra
+// white centre dot so both modules visibly flag the auto-link.
+struct QMapInputPort : lc::WhiteRingPJ301MPort {
     QMapModule* qm = nullptr;
     int slot = -1;
+
+    void draw(const DrawArgs& args) override {
+        lc::WhiteRingPJ301MPort::draw(args);
+        if (!module) return;
+        bool linked = false;
+        if (module->leftExpander.module
+            && module->leftExpander.module->model == modelQMod) linked = true;
+        else if (module->rightExpander.module
+            && module->rightExpander.module->model == modelQMod) linked = true;
+        if (!linked) return;
+        float cx = box.size.x / 2.f, cy = box.size.y / 2.f;
+        float r = box.size.x * 0.08f;
+        nvgBeginPath(args.vg);
+        nvgCircle(args.vg, cx, cy, r);
+        nvgFillColor(args.vg, nvgRGB(255, 255, 255));
+        nvgFill(args.vg);
+    }
 
     void appendContextMenu(ui::Menu* menu) override {
         if (!qm) return;
@@ -288,6 +441,15 @@ struct QMapInputPort : ThemedPJ301MPort {
         menu->addChild(createCheckMenuItem("Bipolar (-5..5V)", "",
             [=]() { return qm && qm->bipolar[slot]; },
             [=]() { if (qm) qm->bipolar[slot] = true; }));
+
+        menu->addChild(new MenuSeparator);
+        menu->addChild(createMenuLabel("Attenuator"));
+        menu->addChild(new MenuSlider(new FloatQuantity(
+            &qm->attenuator[slot], "Attenuator", "×", -2.f, 2.f, 1.f, 2)));
+        menu->addChild(createMenuLabel("Offset"));
+        menu->addChild(new MenuSlider(new FloatQuantity(
+            &qm->offset[slot], "Offset", " V", -10.f, 10.f, 0.f, 2)));
+
         if (qm->paramHandles[slot].module) {
             menu->addChild(new MenuSeparator);
             menu->addChild(createMenuItem("Clear mapping", "",
@@ -322,7 +484,7 @@ QMapWidget::QMapWidget(QMapModule* module) {
         lab->text = "qmap";
         lab->fontSize = 7.f;
         lab->box.size = Vec(box.size.x, mm2px(3.f));
-        lab->box.pos = Vec(0, mm2px(9.f));
+        lab->box.pos = Vec(0, mm2px(7.f));
         addChild(lab);
     }
     {
@@ -374,7 +536,7 @@ QMapWidget::QMapWidget(QMapModule* module) {
         logo->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
         logo->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
         logo->box.size = mm2px(Vec(9.f, 9.f));
-        logo->box.pos  = Vec((box.size.x - logo->box.size.x) / 2.f, mm2px(128.5f - 8.f - 9.f));
+        logo->box.pos  = Vec((box.size.x - logo->box.size.x) / 2.f, mm2px(128.5f - 8.f - 9.f + 2.f));
         addChild(logo);
     }
 }
@@ -392,6 +554,7 @@ void QMapWidget::step() {
     if (pw->module->id == qm->id) return;
 
     int slot = qm->armedSlot;
+    json_t* before = qm->dataToJson();
     APP->scene->rack->setTouchedParam(NULL);
     APP->engine->updateParamHandle(&qm->paramHandles[slot], pw->module->id, pw->paramId, true);
 
@@ -400,6 +563,8 @@ void QMapWidget::step() {
     } else {
         qm->armedSlot = -1;
     }
+
+    pushQMapJsonAction(qm, before, "qmap touch-assign");
 }
 
 void QMapWidget::appendContextMenu(Menu* menu) {
@@ -430,10 +595,54 @@ void QMapWidget::appendContextMenu(Menu* menu) {
     menu->addChild(createMenuItem("Arm all (sequential)", "",
         [=]() { qm->armedSlot = 0; qm->sequentialArm = true; }));
     menu->addChild(createMenuItem("Clear all mappings", "", [=]() {
+        json_t* before = qm->dataToJson();
         for (int i = 0; i < QMapModule::NUM_SLOTS; i++) qm->clearSlot(i);
         qm->armedSlot = -1;
         qm->sequentialArm = false;
+        pushQMapJsonAction(qm, before, "clear qmap mappings");
     }));
+
+    menu->addChild(new MenuSeparator);
+    menu->addChild(createMenuItem("Copy mappings", "", [=]() {
+        if (g_qmapClipboard) json_decref(g_qmapClipboard);
+        g_qmapClipboard = qm->dataToJson();
+    }));
+    menu->addChild(createMenuItem("Paste mappings", "",
+        [=]() {
+            if (!g_qmapClipboard) return;
+            json_t* before = qm->dataToJson();
+            qm->dataFromJson(g_qmapClipboard);
+            pushQMapJsonAction(qm, before, "paste qmap mappings");
+        },
+        /*disabled*/ g_qmapClipboard == nullptr));
+
+    // Adjacency status — shows whether a qmod is currently detected on
+    // either side. Checked at menu-open time. When flanked on both sides,
+    // exposes a radio picker so the user can favour one.
+    menu->addChild(new MenuSeparator);
+    bool linkedLeft = qm->leftExpander.module
+                      && qm->leftExpander.module->model == modelQMod;
+    bool linkedRight = qm->rightExpander.module
+                       && qm->rightExpander.module->model == modelQMod;
+    if (linkedLeft && linkedRight) {
+        const char* favourName = (qm->qmodFavour == 1) ? "right" : "left";
+        menu->addChild(createMenuLabel(
+            string::f("qmods on both sides — favouring %s", favourName)));
+        menu->addChild(createCheckMenuItem("Favour left qmod", "",
+            [=]() { return qm->qmodFavour == 0; },
+            [=]() { qm->qmodFavour = 0; }));
+        menu->addChild(createCheckMenuItem("Favour right qmod", "",
+            [=]() { return qm->qmodFavour == 1; },
+            [=]() { qm->qmodFavour = 1; }));
+    } else if (linkedLeft || linkedRight) {
+        std::string side = linkedLeft ? "left" : "right";
+        menu->addChild(createMenuLabel(
+            string::f("qmod linked on the %s — unconnected aux inputs auto-feed from it",
+                      side.c_str())));
+    } else {
+        menu->addChild(createMenuLabel(
+            "No qmod adjacent — place one next to this module to auto-feed unconnected inputs"));
+    }
 
     menu->addChild(new MenuSeparator);
     lc::appendThemeMenu(menu);

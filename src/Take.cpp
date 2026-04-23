@@ -1,6 +1,7 @@
 #include "Take.hpp"
 #include "Theme.hpp"
 #include "plugin.hpp"
+#include "LcPorts.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -538,7 +539,7 @@ TakeWidget::TakeWidget(TakeModule* module) {
         TakeLabel* l = new TakeLabel;
         l->text = "take";
         l->box.size = math::Vec(box.size.x, mm2px(3.f));
-        l->box.pos  = math::Vec(0, mm2px(9.f));
+        l->box.pos  = math::Vec(0, mm2px(7.f));
         addChild(l);
     }
 
@@ -568,7 +569,7 @@ TakeWidget::TakeWidget(TakeModule* module) {
         l->box.size = math::Vec(box.size.x, mm2px(4.f));
         l->box.pos  = math::Vec(0, mm2px(84.f));
         addChild(l);
-        addInput(createInputCentered<ThemedPJ301MPort>(
+        addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(math::Vec(box.size.x / mm2px(1.f) / 2.f, 92.f)), module, TakeModule::IN_L));
     }
     // R input + label
@@ -579,7 +580,7 @@ TakeWidget::TakeWidget(TakeModule* module) {
         l->box.size = math::Vec(box.size.x, mm2px(4.f));
         l->box.pos  = math::Vec(0, mm2px(97.f));
         addChild(l);
-        addInput(createInputCentered<ThemedPJ301MPort>(
+        addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(math::Vec(box.size.x / mm2px(1.f) / 2.f, 105.f)), module, TakeModule::IN_R));
     }
 
@@ -592,7 +593,7 @@ TakeWidget::TakeWidget(TakeModule* module) {
         lg->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
         lg->box.size = mm2px(Vec(9.f, 9.f));
         lg->box.pos  = math::Vec((box.size.x - lg->box.size.x) / 2.f,
-                                 mm2px(128.5f - 8.f - 9.f));
+                                 mm2px(128.5f - 8.f - 9.f + 2.f));
         addChild(lg);
     }
 }

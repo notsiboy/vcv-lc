@@ -75,6 +75,16 @@
         "Controller",
         "Utility"
       ]
+    },
+    {
+      "slug": "qmod",
+      "name": "qmod",
+      "description": "Fourteen mod-source outputs (LFO / S+H / smooth random) spread slow-to-fast à la Ochd. When placed next to a qmap, each output auto-feeds the matching aux input.",
+      "tags": [
+        "LFO",
+        "Random",
+        "Utility"
+      ]
     }
   ]
 }

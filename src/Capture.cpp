@@ -494,7 +494,7 @@ CaptureWidget::CaptureWidget(CaptureModule* module) {
     // Y-positions mirror tidy's two-toggle layout so the qol family reads as
     // one visual system: top button at logoTop - 21mm, bottom at logoTop - 10mm,
     // labels sit 3mm above each button.
-    const float logoTopMM = 128.5f - 8.f - 9.f;
+    const float logoTopMM = 128.5f - 8.f - 9.f + 2.f;
     const float captureAnchorMM = logoTopMM - 21.f;
     const float scanAnchorMM    = logoTopMM - 10.f;
 

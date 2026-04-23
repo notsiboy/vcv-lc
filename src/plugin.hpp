@@ -11,3 +11,4 @@ extern Model* modelTake;
 extern Model* modelCapture;
 extern Model* modelGrab2;
 extern Model* modelQMap;
+extern Model* modelQMod;

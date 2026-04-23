@@ -579,7 +579,7 @@ TidyWidget::TidyWidget(TidyModule* module) {
     border->box.size = box.size;
     addChild(border);
 
-    float logoTopMM = 128.5f - 8.f - 9.f;
+    float logoTopMM = 128.5f - 8.f - 9.f + 2.f;
 
     PngImageWidget* logo = new PngImageWidget;
     logo->tm = module;

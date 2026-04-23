@@ -1,5 +1,6 @@
 #include "Grab.hpp"
 #include "Theme.hpp"
+#include "LcPorts.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -667,7 +668,7 @@ GrabWidget::GrabWidget(GrabModule* module) {
         lab->text = "grab";
         lab->fontSize = 7.f;
         lab->box.size = Vec(box.size.x, mm2px(3.f));
-        lab->box.pos = Vec(0, mm2px(9.f));
+        lab->box.pos = Vec(0, mm2px(7.f));
         addChild(lab);
     }
 
@@ -706,7 +707,7 @@ GrabWidget::GrabWidget(GrabModule* module) {
         lab->box.pos = Vec(0, mm2px(84.f));
         addChild(lab);
 
-        addInput(createInputCentered<ThemedPJ301MPort>(
+        addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(Vec(15.24f / 2.f, 92.f)), module, GrabModule::IN_L));
     }
 
@@ -718,7 +719,7 @@ GrabWidget::GrabWidget(GrabModule* module) {
         lab->box.pos = Vec(0, mm2px(97.f));
         addChild(lab);
 
-        addInput(createInputCentered<ThemedPJ301MPort>(
+        addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(Vec(15.24f / 2.f, 105.f)), module, GrabModule::IN_R));
     }
 
@@ -729,7 +730,7 @@ GrabWidget::GrabWidget(GrabModule* module) {
         logo->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
         logo->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
         logo->box.size = mm2px(Vec(9.f, 9.f));
-        logo->box.pos  = Vec((box.size.x - logo->box.size.x) / 2.f, mm2px(128.5f - 8.f - 9.f));
+        logo->box.pos  = Vec((box.size.x - logo->box.size.x) / 2.f, mm2px(128.5f - 8.f - 9.f + 2.f));
         addChild(logo);
     }
 }

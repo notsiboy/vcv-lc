@@ -1,6 +1,7 @@
 #include "Grab2.hpp"
 #include "Theme.hpp"
 #include "plugin.hpp"
+#include "LcPorts.hpp"
 #include <patch.hpp>
 
 #include <algorithm>
@@ -710,7 +711,7 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
         Grab2Label* l = new Grab2Label;
         l->text = "grab 2";
         l->box.size = math::Vec(box.size.x, mm2px(3.f));
-        l->box.pos  = math::Vec(0, mm2px(9.f));
+        l->box.pos  = math::Vec(0, mm2px(7.f));
         addChild(l);
     }
 
@@ -792,7 +793,7 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
         l->box.size = math::Vec(mm2px(8.f), mm2px(3.5f));
         l->box.pos  = math::Vec(mm2px(cx) - l->box.size.x / 2.f, mm2px(jackY - 4.f));
         addChild(l);
-        addInput(createInputCentered<ThemedPJ301MPort>(
+        addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(math::Vec(cx, jackY + 4.f)), module, portId));
     };
     placeLabeledJack("L", colL, Grab2Module::IN_L);
@@ -807,7 +808,7 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
         lg->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
         lg->box.size = mm2px(Vec(9.f, 9.f));
         lg->box.pos  = math::Vec((box.size.x - lg->box.size.x) / 2.f,
-                                 mm2px(128.5f - 8.f - 9.f));
+                                 mm2px(128.5f - 8.f - 9.f + 2.f));
         addChild(lg);
     }
 }

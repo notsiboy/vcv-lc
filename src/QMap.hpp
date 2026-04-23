@@ -18,6 +18,22 @@ struct QMapModule : Module {
     // Per-slot input polarity: false = unipolar (0..10V), true = bipolar (-5..5V).
     bool bipolar[NUM_SLOTS];
 
+    // Per-slot CV conditioning. Applied as `v = v * atten + offset` before
+    // the polarity-aware normalise step, so users can trim a too-hot CV or
+    // bias a bipolar signal without rewiring.
+    float attenuator[NUM_SLOTS];   // default 1.0, range -2..+2
+    float offset[NUM_SLOTS];       // default 0.0V, range -10..+10 V
+
+    // Last 0..1 normalised input for each slot — written by process(), read
+    // by the UI to drive the per-slot arm-LED brightness. Non-atomic: one
+    // writer, many readers, UI only needs a visually-plausible value.
+    float modLevel[NUM_SLOTS] = {};
+
+    // When a qmap is flanked by qmods on BOTH sides, which one feeds the aux
+    // inputs: 0 = left (default), 1 = right. Ignored when only one side has
+    // a qmod; the available one is used automatically.
+    int qmodFavour = 0;
+
     // -1 when no slot is armed, otherwise the slot awaiting touch-assign.
     int armedSlot = -1;
     // True when the arming sweep was kicked off by the master q-map button —
