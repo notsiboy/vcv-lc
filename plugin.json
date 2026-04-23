@@ -85,6 +85,16 @@
         "Random",
         "Utility"
       ]
+    },
+    {
+      "slug": "flow",
+      "name": "flow (beta)",
+      "description": "Routing switcher for a four-effect chain. Wire send/return pairs to four external effects, then cycle or CV-select between eight permutation presets to rearrange processing order on the fly. Fade or morph between presets; bypass gate for momentary chain-dry stutter.",
+      "tags": [
+        "Effect",
+        "Utility",
+        "Polyphonic"
+      ]
     }
   ]
 }
