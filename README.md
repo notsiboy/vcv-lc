@@ -117,19 +117,6 @@ Right-click covers both sides: fit-all / hide-self / viewport-only toggles for c
 
 3 HP.
 
-### jump (experimental)
-
-![jump module](docs/jump.png)
-
-Saved-view bookmarks for navigating large patches. Click the dot to arm, then `Cmd+1..9` saves the current scroll + zoom; not armed, `Cmd+1..9` jumps to that slot.
-
-- 9 slots, per-patch persistence
-- `Cmd+[` / `Cmd+]` back/forward through nav history
-- Pulse-on-arrival so the eye can follow the jump
-- One amber-pulse dot on the panel; `Esc` cancels arm
-
-Filed as experimental: the view-restore has a known zoom drift on tight close-up saves (5% of viewport is baked into Rack's `zoomToBound` padding, which translates to ~5–17% zoom-out depending on how zoomed-in you were). Overview-scale bookmarks are near-perfect; re-saving from the landed view is an easy self-correct.
-
 ## Building
 
 Requires the VCV Rack SDK. Set `RACK_DIR` to point at it:
