@@ -23,9 +23,19 @@ One recorder, every mode. Combines auto-triggered one-shot capture, a retrospect
 
 **Peak meters + waveform** — L peak column on the left, a vertical voice-memos waveform in the middle, R peak column on the right. A mono source lights both peak columns (signal mirrors into both sides) so it's visually clear you can record with just one cable patched.
 
+**Recording layout** — saves are auto-routed into type folders so the three flavours never mix:
+
+```
+<outputDir>/[<patch>_<dd>_<mm>_<yyyy>/]grabs/<patch>_grab_01.wav
+<outputDir>/[<patch>_<dd>_<mm>_<yyyy>/]recs/<patch>_rec_01.wav
+<outputDir>/[<patch>_<dd>_<mm>_<yyyy>/]takes/<patch>_take_01.wav
+```
+
+- The outer dated patch folder is on by default (right-click → **Save to sub folder** to toggle).
+- Filename prefixes are auto-derived from the current patch name + type — nothing to type.
+- **Output directory is sticky across sessions**: the last folder you picked seeds every fresh grab+ you drop in, so you're not re-picking after every patch reset. Persists in Rack's user folder.
+
 **Other conveniences**
-- **Save to sub folder** — one-click toggle that routes saves into `<outputDir>/<patch>_<dd>_<mm>_<yyyy>/`. Flipped off-on later gets a fresh date
-- Separate filename prefixes for one-shots (`grab_NN.wav`) and takes (`take_NN.wav`), shared output dir
 - Mono recording: if only L (or only R) is patched, the file is written as a true mono WAV — not a stereo WAV with duplicate channels
 - All grab / take / snip settings (threshold, hangover, pre-roll, fade in/out, bit depth, normalise, buffer length, silence threshold…) available in the right-click menu
 

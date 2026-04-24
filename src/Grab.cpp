@@ -99,8 +99,23 @@ std::string GrabModule::resolveOutputDir() const {
     return base;
 }
 
-int GrabModule::scanNextIndex(const std::string& dir) const {
-    std::string pfx = prefix.empty() ? std::string("grab_") : prefix;
+std::string GrabModule::resolveOutputDirRec() const {
+    std::string base;
+    if (outputDir.empty())
+        base = asset::plugin(pluginInstance, "test");
+    else if (outputDir[0] == '/' ||
+             (outputDir.size() > 1 && outputDir[1] == ':'))
+        base = outputDir;
+    else
+        base = asset::plugin(pluginInstance, outputDir);
+
+    const std::string& sub = subfolderRec.empty() ? subfolder : subfolderRec;
+    if (!sub.empty()) base += "/" + sub;
+    return base;
+}
+
+int GrabModule::scanNextIndex(const std::string& dir, const std::string& pfx) const {
+    if (pfx.empty()) return 1;
     int maxN = 0;
     DIR* d = opendir(dir.c_str());
     if (!d) return 1;
@@ -340,12 +355,20 @@ void GrabModule::process(const ProcessArgs& args) {
             const size_t minFrames = (size_t)std::ceil(MIN_TAKE_MS * 0.001f * args.sampleRate);
 
             if (frames >= minFrames) {
-                std::string dir = resolveOutputDir();
+                // Force-rec files route to the "rec" pair (subfolderRec /
+                // prefixRec); auto-triggered one-shots go to the "grab" pair.
+                // Empty overrides fall back to the shared `subfolder` /
+                // `prefix` values, which preserves standalone behaviour.
+                const bool rec = forceStarted;
+                std::string dir = rec ? resolveOutputDirRec() : resolveOutputDir();
                 rack::system::createDirectories(dir);
-                int idx = scanNextIndex(dir);
-                char name[64];
-                std::snprintf(name, sizeof(name), "%s%02d.wav",
-                              prefix.empty() ? "grab_" : prefix.c_str(), idx);
+                std::string pfx = rec
+                    ? (prefixRec.empty() ? prefix : prefixRec)
+                    : prefix;
+                if (pfx.empty()) pfx = rec ? "rec_" : "grab_";
+                int idx = scanNextIndex(dir, pfx);
+                char name[128];
+                std::snprintf(name, sizeof(name), "%s%02d.wav", pfx.c_str(), idx);
                 std::string path = dir + "/" + name;
 
                 TakeJob* job = new TakeJob();

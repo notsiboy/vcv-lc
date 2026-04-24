@@ -26,6 +26,11 @@ struct GrabModule : Module {
     std::string prefix    = "grab_";
     std::string outputDir = "";   // empty = default (plugin_dir/test)
     std::string subfolder = "";   // appended to outputDir when non-empty
+    // When grab+ wraps us, it uses two paths — one for auto-triggered "grab"
+    // one-shots, another for force-rec "rec" files. These overrides are
+    // consulted only when non-empty; empty falls back to `subfolder` / `prefix`.
+    std::string subfolderRec = "";
+    std::string prefixRec    = "";
 
     // Live read from UI thread (peak meter / rec LED)
     std::atomic<float> peakL{0.f};
@@ -62,8 +67,9 @@ struct GrabModule : Module {
     void dataFromJson(json_t* root) override;
 
     void rebuildBuffers();
-    std::string resolveOutputDir() const;
-    int scanNextIndex(const std::string& dir) const;
+    std::string resolveOutputDir() const;             // uses `subfolder`
+    std::string resolveOutputDirRec() const;          // uses `subfolderRec`, falls back to `subfolder`
+    int scanNextIndex(const std::string& dir, const std::string& pfx) const;
 };
 
 struct GrabWidget : ModuleWidget {

@@ -16,6 +16,19 @@ GrabPlusModule::GrabPlusModule() {
     config(0, NUM_INPUTS, 0, 0);
     configInput(IN_L, "Left");
     configInput(IN_R, "Right");
+
+    // Seed outputDir from the last-used folder so a fresh grab+ drops saves
+    // wherever the user last worked. dataFromJson will overwrite this if the
+    // patch stored a non-empty outputDir; we also defend against an explicit
+    // empty-string in the JSON there.
+    std::string last = loadLastOutputDir();
+    if (!last.empty()) {
+        grab.outputDir = last;
+        take.outputDir = last;
+    }
+    // Lay in the initial grab/rec/take subfolder + filename prefixes for
+    // the default patch name ("untitled" until the host saves).
+    updateSubfolder();
 }
 
 void GrabPlusModule::onSampleRateChange(const SampleRateChangeEvent& e) {
@@ -73,11 +86,20 @@ void GrabPlusModule::dataFromJson(json_t* root) {
     if (json_t* t = json_object_get(root, "take")) take.dataFromJson(t);
     if (json_t* j = json_object_get(root, "useDatedSubfolder"))
         useDatedSubfolder = json_boolean_value(j);
+    // If the patch stored an empty outputDir (fresh-inserted grab+ then saved
+    // before the user picked a folder), fall back to the last-dir file so a
+    // reload still lands somewhere sensible.
+    if (grab.outputDir.empty()) {
+        std::string last = loadLastOutputDir();
+        if (!last.empty()) {
+            grab.outputDir = last;
+            take.outputDir = last;
+        }
+    }
     updateSubfolder();
 }
 
-std::string GrabPlusModule::datedSubfolderName() {
-    std::string patchName = "untitled";
+std::string GrabPlusModule::currentPatchName() {
     if (APP && APP->patch) {
         std::string path = APP->patch->path;
         if (!path.empty()) {
@@ -85,9 +107,14 @@ std::string GrabPlusModule::datedSubfolderName() {
             std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
             size_t dot = name.rfind('.');
             if (dot != std::string::npos) name = name.substr(0, dot);
-            if (!name.empty()) patchName = name;
+            if (!name.empty()) return name;
         }
     }
+    return "untitled";
+}
+
+std::string GrabPlusModule::datedSubfolderName() {
+    std::string patchName = currentPatchName();
     std::time_t now = std::time(nullptr);
     std::tm* lt = std::localtime(&now);
     char datebuf[16];
@@ -96,9 +123,63 @@ std::string GrabPlusModule::datedSubfolderName() {
 }
 
 void GrabPlusModule::updateSubfolder() {
-    std::string name = useDatedSubfolder ? datedSubfolderName() : std::string();
-    grab.subfolder = name;
-    take.subfolder = name;
+    // Outer dated folder when toggled on; the per-type folders below it are
+    // always present so grabs / recs / takes never mix.
+    std::string outer = useDatedSubfolder ? datedSubfolderName() : std::string();
+    auto typeSub = [&](const char* type) {
+        return outer.empty() ? std::string(type) : outer + "/" + type;
+    };
+    grab.subfolder    = typeSub("grabs");
+    grab.subfolderRec = typeSub("recs");
+    take.subfolder    = typeSub("takes");
+
+    // Filename bases — "<patchname>_<type>_".
+    std::string patch = currentPatchName();
+    grab.prefix    = patch + "_grab_";
+    grab.prefixRec = patch + "_rec_";
+    take.prefix    = patch + "_take_";
+
+    cachedPatchPath = (APP && APP->patch) ? APP->patch->path : std::string();
+}
+
+// ─── Last-dir persistence ───────────────────────────────────────────────────
+//
+// Stored in a single file in Rack's user folder so every grab+ instance (and
+// successive Rack sessions) share the same "last used" hint. Fire-and-forget —
+// read failures just yield an empty string which the caller treats as "no
+// hint available".
+
+static std::string grabPlusLastDirPath() {
+    return asset::user("LuxCache-grabplus-lastdir.txt");
+}
+
+std::string GrabPlusModule::loadLastOutputDir() {
+    std::FILE* f = std::fopen(grabPlusLastDirPath().c_str(), "rb");
+    if (!f) return "";
+    char buf[2048];
+    size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
+    std::fclose(f);
+    buf[n] = '\0';
+    std::string s(buf);
+    // Trim trailing whitespace / newlines.
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' ||
+                          s.back() == ' '  || s.back() == '\t'))
+        s.pop_back();
+    return s;
+}
+
+void GrabPlusModule::saveLastOutputDir(const std::string& dir) {
+    if (dir.empty()) return;
+    std::FILE* f = std::fopen(grabPlusLastDirPath().c_str(), "wb");
+    if (!f) return;
+    std::fwrite(dir.data(), 1, dir.size(), f);
+    std::fclose(f);
+}
+
+void GrabPlusModule::setOutputDir(const std::string& dir) {
+    grab.outputDir = dir;
+    take.outputDir = dir;
+    saveLastOutputDir(dir);
 }
 
 // ─── Widgets ────────────────────────────────────────────────────────────────
@@ -821,6 +902,11 @@ void GrabPlusWidget::step() {
         m->grab.spareBuf = std::vector<float>();
         m->grab.spareBuf.reserve(m->grab.capSamples);
     }
+    // Refresh subfolder + filename prefixes when the patch path changes
+    // (i.e. first save, save-as). UI-rate check is cheap — string compare
+    // on a field that's usually stable.
+    std::string now = (APP && APP->patch) ? APP->patch->path : std::string();
+    if (now != m->cachedPatchPath) m->updateSubfolder();
 }
 
 // ─── Context menu widgets ───────────────────────────────────────────────────
@@ -908,7 +994,7 @@ struct SharedDirField : ui::TextField {
     SharedDirField() { box.size.x = 200.f; }
     void onChange(const event::Change& e) override {
         ui::TextField::onChange(e);
-        if (m) { m->grab.outputDir = text; m->take.outputDir = text; }
+        if (m) m->setOutputDir(text);
     }
 };
 
@@ -971,12 +1057,6 @@ struct GrabSettingsMenu : MenuItem {
         bd->gm = gm;
         menu->addChild(bd);
 
-        menu->addChild(new MenuSeparator);
-        menu->addChild(createMenuLabel("Filename prefix"));
-        GrabPrefixField* pf = new GrabPrefixField;
-        pf->gm = gm; pf->text = gm->prefix;
-        menu->addChild(pf);
-
         return menu;
     }
 };
@@ -1014,12 +1094,6 @@ struct TakeSettingsMenu : MenuItem {
                         tm->bitDepth == 16 ? "16-bit" : "24-bit") + "  " + RIGHT_ARROW);
         bd->tm = tm;
         menu->addChild(bd);
-
-        menu->addChild(new MenuSeparator);
-        menu->addChild(createMenuLabel("Filename prefix"));
-        TakePrefixField* pf = new TakePrefixField;
-        pf->tm = tm; pf->text = tm->prefix;
-        menu->addChild(pf);
 
         return menu;
     }
@@ -1091,8 +1165,7 @@ void GrabPlusWidget::appendContextMenu(Menu* menu) {
     menu->addChild(createMenuItem("Choose folder…", "", [m]() {
         char* p = osdialog_file(OSDIALOG_OPEN_DIR, nullptr, nullptr, nullptr);
         if (p) {
-            m->grab.outputDir = p;
-            m->take.outputDir = p;
+            m->setOutputDir(p);
             std::free(p);
         }
     }));

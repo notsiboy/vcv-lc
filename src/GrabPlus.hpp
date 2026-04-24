@@ -23,10 +23,15 @@ struct GrabPlusModule : Module {
     GrabModule grab;
     TakeModule take;
 
-    // When true, save files land in "<patch>_<dd>_<mm>_<yyyy>" under
-    // outputDir, with the subfolder name refreshed from the current patch +
-    // date whenever this flag is re-applied.
-    bool useDatedSubfolder = false;
+    // When true (default), save files land in a dated patch folder
+    // "<patch>_<dd>_<mm>_<yyyy>/<type>/" under outputDir. When off, files
+    // still route through per-type subfolders (grabs / recs / takes) so
+    // the three flavours never mix in one directory.
+    bool useDatedSubfolder = true;
+
+    // Cache of the last patch path we resolved subfolder names off. When it
+    // changes between ticks, refresh the subfolder + filename strings.
+    std::string cachedPatchPath;
 
     GrabPlusModule();
     void process(const ProcessArgs& args) override;
@@ -35,9 +40,20 @@ struct GrabPlusModule : Module {
     json_t* dataToJson() override;
     void    dataFromJson(json_t* root) override;
 
-    // Propagates useDatedSubfolder to grab/take's `subfolder` fields.
+    // Recomputes grab/take subfolders + filename prefixes from the current
+    // patch name, date, and useDatedSubfolder flag.
     void updateSubfolder();
     static std::string datedSubfolderName();
+    static std::string currentPatchName();
+
+    // Tiny cross-module persistence for "last chosen output directory" so a
+    // freshly-inserted grab+ adopts wherever the user saved to last time.
+    static std::string loadLastOutputDir();
+    static void        saveLastOutputDir(const std::string& dir);
+
+    // Apply an output-dir change: updates both inner modules and persists
+    // the last-dir file.
+    void setOutputDir(const std::string& dir);
 };
 
 struct GrabPlusWidget : ModuleWidget {
