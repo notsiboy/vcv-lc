@@ -155,22 +155,6 @@ Same 14-slot mod source as qmod+, but in **6 HP** with a per-row **log-scaled ra
 - **Trigger / CV input** (right-click the jack for the mode picker): Trigger / resync, Gate (run/freeze), CV → rate / smoothness / mode. A rising edge on this jack resyncs *every* qmod / qmod+ in the array, so rand-trig / rand-gate / triggered-S+H all fire in lockstep.
 - Everything else inherits from qmod+: per-column modes, LFO shape, slew + shape per jack, range, atten, offset, copy/paste (shared clipboard), undo.
 
-### flow
-
-Routing switcher for a four-effect send/return loop. Wire up to four external effects to the four send/return pairs; `flow` reorders the chain on the fly between eight factory permutations.
-
-- **4 slots × send/return** — greyscale row tints and A/B/C/D labels between each pair's jacks identify slot-to-letter mapping. Unplugged returns bypass their slot so incomplete chains still pass audio.
-- **Chain IN / OUT** at the bottom of the row stack. Polyphonic cables pass through untouched — stereo "just works" when the source feeds 2 channels down one cable.
-- **Master cycle button + order chip strip** at the top: click to advance preset, chips cross-dissolve to the new A/B/C/D processing order.
-- **CV order input** — 0..10 V picks one of the 8 presets, quantised with 15% hysteresis on zone boundaries.
-- **8 factory permutations** — straight, full reverse, pair swap, inner swap, outer/inner reverse, pair rotation, rotate left, rotate right. Cycle button, CV, or right-click radio list.
-- **Fade / Morph transition** — right-click picker. Fade is a 20 ms duck that just hides the routing jump; Morph stretches to a 400 ms audible crossfade where the chip display and audio dissolve into the new permutation together.
-- **Bypass** — bottom-centre gate input above a sticky toggle button. Button latches chain IN → OUT; gate forces bypass while high (stutter-style when tapped). Sends stay active during bypass so effects keep their state warm for re-entry.
-- **Copy / Paste preset** between flow modules. Every preset change, bypass toggle, and paste goes through the undo stack.
-- Each chain hop costs 1 sample of latency (≈0.09 ms total at 44.1 kHz) because Rack can't topologically order cable loops; inaudible in practice.
-
-4 HP. Persists preset, bypass state, and fade mode in JSON.
-
 ### capture
 
 ![capture module](docs/capture.png)

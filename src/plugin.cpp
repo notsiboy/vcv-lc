@@ -14,6 +14,5 @@ void init(Plugin* p) {
     p->addModel(modelGrab2);
     p->addModel(modelQMap);
     p->addModel(modelQMod);
-    p->addModel(modelFlow);
     p->addModel(modelQModPlus);
 }
