@@ -655,6 +655,14 @@ void QMapWidget::step() {
     if (!pw || !pw->module) return;
     // Ignore our own params (we have none, but belt-and-braces).
     if (pw->module->id == qm->id) return;
+    // Never auto-assign to any LC Q-family module's params. Otherwise it's
+    // too easy to accidentally bind to the qmod rate knobs when aiming for
+    // a slot LED next to them. Consume the touched-param slot so the next
+    // real click still lands normally.
+    if (lc::isQDevice(pw->module)) {
+        APP->scene->rack->setTouchedParam(NULL);
+        return;
+    }
 
     int slot = qm->armedSlot;
     json_t* before = qm->dataToJson();

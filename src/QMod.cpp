@@ -193,9 +193,15 @@ void QModModule::process(const ProcessArgs& args) {
             }
             slewable = true;
         } else if (m == MODE_SH) {
+            // Rate-change freeze guard: if the in-flight counter represents
+            // a much longer hold than the current rate would schedule,
+            // clamp it down so a big rate increase doesn't leave us stuck
+            // waiting out the slow hold.
+            float curPeriod = sr / f;
+            if (shCounter[i] > curPeriod * 1.5f) shCounter[i] = curPeriod;
             if (shCounter[i] <= 0.f) {
                 shValue[i] = random::uniform();
-                shCounter[i] = sr / f;
+                shCounter[i] = curPeriod;
             }
             shCounter[i] -= 1.f;
             v01 = shValue[i];
@@ -206,10 +212,19 @@ void QModModule::process(const ProcessArgs& args) {
             v01 = shValue[i];
             slewable = true;
         } else if (m == MODE_SMOOTH) {
+            // Rate-change freeze guard: if the in-flight cycle was scheduled
+            // under a much slower rate than we're now running, rescale the
+            // remaining counter so the cycle finishes promptly.
+            float curPeriod = sr / f;
+            if (smoothPeriod[i] > curPeriod * 1.5f) {
+                if (smoothPeriod[i] > 0.f)
+                    smoothCounter[i] *= curPeriod / smoothPeriod[i];
+                smoothPeriod[i] = curPeriod;
+            }
             if (smoothCounter[i] <= 0.f) {
                 smoothFrom[i] = smoothTo[i];
                 smoothTo[i] = random::uniform();
-                smoothPeriod[i] = sr / f;
+                smoothPeriod[i] = curPeriod;
                 smoothCounter[i] = smoothPeriod[i];
             }
             float progress = smoothPeriod[i] > 0.f
@@ -225,40 +240,76 @@ void QModModule::process(const ProcessArgs& args) {
             smoothCounter[i] -= 1.f;
             slewable = true;
         } else if (m == MODE_RAND_TRIG) {
+            // Rate-change freeze guard — same idea as MODE_SH.
+            float curPeriod = sr / f;
+            if (trigCounter[i] > curPeriod * 3.f) trigCounter[i] = curPeriod;
             if (trigCounter[i] <= 0.f) {
-                trigPulse[i].trigger(1e-3f);    // 1 ms pulse
-                float mean = sr / f;
+                trigPulse[i].trigger(1e-3f);
+                float mean = curPeriod;
                 float jitter = mean * (0.5f + random::uniform());
                 trigCounter[i] = jitter;
             }
             trigCounter[i] -= 1.f;
             bool hi = trigPulse[i].process(args.sampleTime);
-            outV = hi ? mapToVoltage(i, 1.f) : mapToVoltage(i, 0.5f);
-            if (hi) outV = std::max(outV, 5.f);
-            else outV = 0.f;
-            if (hi) modLevel[i] = 1.f;
-            else    modLevel[i] = std::max(0.f, modLevel[i] - args.sampleTime / 0.12f);
+            // Trigger output is 0V when low, 5V when high. The per-slot
+            // slew slider applies to this step so you can turn a bare
+            // trigger into an AR envelope (shape -1 = short rise / long
+            // fall, +1 = long rise / short fall).
+            float target = hi ? 1.f : 0.f;
+            float slewAmt = std::max(slew[i], activeSmoothness);
+            if (slewAmt > 0.f) {
+                const float maxTau = 0.3f;
+                float sh = math::clamp(slewShape[i], -1.f, 1.f);
+                bool rising = (target > slewState[i]);
+                float frac = rising ? (1.f + sh) : (1.f - sh);
+                float tau = slewAmt * slewAmt * maxTau * frac;
+                if (tau > 1e-6f) {
+                    float a = 1.f - std::exp(-args.sampleTime / tau);
+                    slewState[i] += a * (target - slewState[i]);
+                } else {
+                    slewState[i] = target;
+                }
+            } else {
+                slewState[i] = target;
+            }
+            float envelope = math::clamp(slewState[i], 0.f, 1.f);
+            modLevel[i] = envelope;
+            outV = envelope * 5.f;
             outV = outV * attenuator[i] + offset[i];
             outputs[MOD_OUTPUT + i].setVoltage(outV);
             continue;
         } else { // MODE_RAND_GATE
-            // Gates flip on/off at stochastic intervals. Each flip picks a
-            // new duration of ~one period at the slot's rate, ±50% jitter,
-            // so the gate feels organic rather than a perfect clock.
+            // Rate-change freeze guard.
+            float curPeriod = sr / f;
+            if (trigCounter[i] > curPeriod * 3.f) trigCounter[i] = curPeriod;
             if (trigCounter[i] <= 0.f) {
                 gateState[i] = !gateState[i];
-                float mean = sr / f;
+                float mean = curPeriod;
                 float jitter = mean * (0.5f + random::uniform());
                 trigCounter[i] = jitter;
             }
             trigCounter[i] -= 1.f;
-            if (gateState[i]) {
-                outV = std::max(mapToVoltage(i, 1.f), 5.f);
-                modLevel[i] = 1.f;
+            // Gate target is 0 or 1; slew turns it into a sloped gate.
+            float target = gateState[i] ? 1.f : 0.f;
+            float slewAmt = std::max(slew[i], activeSmoothness);
+            if (slewAmt > 0.f) {
+                const float maxTau = 0.3f;
+                float sh = math::clamp(slewShape[i], -1.f, 1.f);
+                bool rising = (target > slewState[i]);
+                float frac = rising ? (1.f + sh) : (1.f - sh);
+                float tau = slewAmt * slewAmt * maxTau * frac;
+                if (tau > 1e-6f) {
+                    float a = 1.f - std::exp(-args.sampleTime / tau);
+                    slewState[i] += a * (target - slewState[i]);
+                } else {
+                    slewState[i] = target;
+                }
             } else {
-                outV = 0.f;
-                modLevel[i] = 0.f;
+                slewState[i] = target;
             }
+            float level = math::clamp(slewState[i], 0.f, 1.f);
+            modLevel[i] = level;
+            outV = level * 5.f;
             outV = outV * attenuator[i] + offset[i];
             outputs[MOD_OUTPUT + i].setVoltage(outV);
             continue;
