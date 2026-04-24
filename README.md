@@ -93,65 +93,80 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 - Right-click: buffer length, fade in/out, normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory + picker, reveal folder
 - 4 HP
 
+## The Q-family
+
+**qmap**, **qmod+** and **qmod** are three siblings designed to work together. Place any of them edge-to-edge and they recognise each other as a single **Q-array**: shared row numbering, arrayed modulation routing, and cross-module knob propagation. Or use any one standalone — they're also useful in isolation.
+
+- Every Q module has **14 slots** arranged in 7 rows × 2 columns.
+- Within an array, slots are numbered per-family: every qmap is numbered 1–14, the next qmap 15–28, etc; the qmod-family counts independently on the same rule. A qmap slot and a qmod-family slot sharing the same number are **paired** — qmod-family slot N's output feeds qmap slot N's input automatically.
+- Right-click any Q module → **Join array with neighbouring LC Q modules** toggles membership. Opt a module out and it becomes a singleton; the array splits at its boundary.
+- Slot LEDs carry small dynamic number labels that update live as you shuffle modules around.
+- Centre-dot on a jack = the slot is actively paired with a counterpart across the array.
+
 ### qmap
 
 ![qmap module](docs/qmap.png)
 
 14 aux CV inputs that touch-map to any parameter in the rack — uMap-style. Arm a slot, click a knob anywhere in the patch, and that knob follows the CV on the matching jack.
 
-- Touch-to-assign uses Rack's own touched-param mechanism: once a slot is armed, the next param you click on another module becomes its target. No dragging cables to phantom inputs.
-- **qmap** master button at the top walks the arming cursor through slots 1 → 14 automatically — hit it once, touch-assign every jack in order. Clicking it again mid-sweep cancels. Each successful assign pushes an undo entry.
-- Per-slot arm buttons flash amber while armed; when a slot is bound the dot tracks the incoming CV — the LED visibly breathes with whatever is driving the param. Right-click an arm button to clear its mapping.
-- Right-click a jack for per-slot **Unipolar (0..10V) / Bipolar (-5..5V)** polarity plus draggable **Attenuator** (±2×) and **Offset** (±10V) sliders so you can trim or bias a CV without patching an inline scaler.
-- Drop a **qmod** next to this module and every unconnected aux input auto-feeds from the matching qmod output. A centre dot appears on both modules' jacks while the link is active. A real cable always overrides the auto-feed. When flanked by qmods on both sides, a radio in the menu lets you favour left or right.
-- Module context menu: mappings list (click a bound entry to clear, click an empty entry to arm), **Arm all (sequential)**, **Clear all mappings**, **Copy/Paste mappings** to clone a whole bank to another qmap, adjacency status, theme picker.
-- Bindings persist across patch save/load via VCV's `ParamHandle` system, so reordering or duplicating target modules doesn't silently break the map.
+- Touch-to-assign uses Rack's own touched-param mechanism. Once a slot is armed, the next param you click on another module becomes its target — no dragging cables to phantom inputs. Q-family modules are deliberately excluded so you can't accidentally bind to a qmod rate knob.
+- **Master button** at the top — left-click starts or advances the sequential-arm sweep (slots 1 → 14 in order, cancels mid-sweep on another click). Right-click for a direct menu: **Arm all (sequential)**, **Clear all mappings**, **Copy mappings**, **Paste mappings**.
+- Per-slot arm buttons flash amber while armed. When bound, the LED tracks incoming CV and breathes with it. When *unbound* but receiving signal from an array qmod, the LED shows white (so an unmapped slot still registers what's arriving). Right-click an arm button to clear its mapping.
+- Per-jack right-click → **Range** submenu (unipolar / bipolar, 10 V / 5 V / 1 V), plus **Attenuator** (±2×) and **Offset** (±10 V) sliders for inline CV conditioning.
+- Array feed: each qmap slot pairs with whichever qmod-family slot has the same global index. Missing pair → no feed. A real cable always overrides the auto-feed.
+- Mapping bindings persist across patch save/load via VCV's `ParamHandle` system, so reordering or duplicating target modules doesn't silently break the map. Touch-assign, clear and paste actions all go through the undo stack.
 
-4 HP, laid out as 7 rows × 2 columns of jacks with arm buttons tucked above each.
+4 HP. 7 rows × 2 columns of jacks, arm buttons tucked above each with a small slot-number label on the left.
+
+### qmod+
+
+![qmod+ module](docs/qmod.png)
+
+4 HP 14-slot modulation source. Six modes per column, each with its own LED colour that breathes with the slot's output CV.
+
+**Modes** (per column, cycled by top button or right-click picker):
+
+- **Random triggers** (red) — stochastic trigger bursts, ±50% jitter
+- **Triggered S+H** (orange) — held value, resampled only on a trigger
+- **Smooth random** (cyan, default) — smootherstep-slewed random-target wander
+- **Sample & hold** (purple) — free-running S+H at each slot's rate
+- **LFO** (green) — sine / triangle / square / saw (menu picker)
+- **Random gates** (gold) — stochastic on/off gate pattern
+
+Click the **column mode button** to cycle, **right-click** for a direct mode picker. Per-slot LEDs can be clicked to diverge from the column's mode; column cycle broadcasts back to every slot.
+
+**Per-jack right-click** — **Range** submenu, **Attenuator**, **Offset**, **Slew** and **Slew shape** sliders. Slew turns any slew-capable slot into an asymmetric slew limiter:
+
+- shape −1 → instant rise, long fall (classic drum envelope on rand-trig)
+- shape  0 → symmetric
+- shape +1 → long rise, instant fall
+
+Random triggers and random gates pass through the slew too — set shape −1 on a rand-trig slot to generate AR envelopes on every pulse.
+
+**Module right-click** — LFO waveshape, global rate, global smoothness, stagger toggle + spread, range (all slots), in-array toggle, copy/paste settings (shared with qmod).
 
 ### qmod
 
-![qmod module](docs/qmod.png)
+Same 14-slot mod source as qmod+, but in **6 HP** with a per-row **log-scaled rate knob strip** on the right, a **trigger / CV input** jack, and **Apply stagger** menu actions.
 
-14-channel modulation source with the same layout as qmap — drop them side-by-side and every qmod output lines up with the matching qmap aux input.
+- Left 4 HP mirrors qmod+'s layout exactly — same column centres, same pitch — so modules line up row-for-row in an array.
+- **Rate knob strip** on the right: one knob per row, ±2 decades (0.01× … 100×) around the base rate, log-scaled. When a qmod is in a Q-array, its row knobs drive every qmod / qmod+ in the array — leftmost qmod wins so you can stack "coarse" and "fine" controls.
+- **Apply stagger** menu action writes a log-spread directly into the row knobs (row 0 = 1×, row 6 = spreadRatio×). **Reset row knobs to 1×** flattens.
+- **Trigger / CV input** (right-click the jack for the mode picker): Trigger / resync, Gate (run/freeze), CV → rate / smoothness / mode. A rising edge on this jack resyncs *every* qmod / qmod+ in the array, so rand-trig / rand-gate / triggered-S+H all fire in lockstep.
+- Everything else inherits from qmod+: per-column modes, LFO shape, slew + shape per jack, range, atten, offset, copy/paste (shared clipboard), undo.
 
-**Modes** — the master button at the top cycles five modes, each with its own LED colour. Picking a mode broadcasts it to every slot; per-slot LED buttons can be clicked to diverge so any mix of modes can run on the same bank.
+### flow
 
-- **Random triggers** (red) — stochastic trigger bursts, each slot fires at its own rate with ±50% jitter
-- **Triggered S+H** (orange) — no internal clock; every trigger input rising edge resamples every slot, VCV Random-style
-- **Smooth random** (cyan, default) — smootherstep-slewed random-target wander
-- **Sample & hold** (purple) — classic free-running S+H at each slot's rate
-- **LFO** (green) — selectable sine / triangle / square / saw
-
-**Stagger** — Ochd-style log-spread of rates from slot 1 (fastest) to slot 14 (slowest). Toggle on/off, and dial the **Stagger spread** slider to tighten or stretch the slow-end multiplier. Turn stagger off and every slot runs at the global rate.
-
-**Global controls** (inline in the right-click menu)
-- **Global rate** — 0.01–10 Hz base speed
-- **Smoothness** — double duty: shapes the random-target slew in smooth-random mode, and acts as a one-pole output slew limiter on S+H / triggered S+H / LFO so step changes glide. Random triggers bypass it so pulses stay crisp.
-
-**Trigger / CV input** — single jack at the top; the right-click menu picks how it's read:
-- **Trigger / resync** — rising edge resets phases, resamples S+H slots, fires random triggers
-- **Gate (run/freeze)** — high = run, low = freeze and hold every output voltage
-- **CV → rate / smoothness / mode** — accepts unipolar or bipolar (±5V) signals; while the cable drives the value, your menu-set base is preserved and restored the moment you unplug
-
-**Per-jack right-click** — output range (unipolar 0..10V / 0..5V / 0..1V, bipolar ±10V / ±5V / ±1V), plus **Attenuator** (±2×) and **Offset** (±10V) for post-range conditioning.
-
-**Other**: per-slot LED brightness tracks each output's CV (triggers flash and decay), **Copy/Paste settings** to clone a whole qmod to another, undo on mode cycles and paste, and a live status line showing whether a qmap is adjacent and which side is auto-feeding. Per-slot state persists in JSON.
-
-4 HP. 14 outputs in 7×2 columns, title + master button + trigger input up top.
-
-### flow *(beta)*
-
-Routing switcher for a four-effect send/return loop. Wire up to four external effects on the left column (sends) and right column (returns); `flow` reorders the chain on the fly between eight factory permutations.
+Routing switcher for a four-effect send/return loop. Wire up to four external effects to the four send/return pairs; `flow` reorders the chain on the fly between eight factory permutations.
 
 - **4 slots × send/return** — greyscale row tints and A/B/C/D labels between each pair's jacks identify slot-to-letter mapping. Unplugged returns bypass their slot so incomplete chains still pass audio.
 - **Chain IN / OUT** at the bottom of the row stack. Polyphonic cables pass through untouched — stereo "just works" when the source feeds 2 channels down one cable.
 - **Master cycle button + order chip strip** at the top: click to advance preset, chips cross-dissolve to the new A/B/C/D processing order.
-- **CV order input** — 0..10V picks one of the 8 presets, quantised with 15% hysteresis on zone boundaries.
-- **8 factory permutations** — straight, full reverse, pair swap, inner swap, outer/inner reverse, pair rotation, rotate left, rotate right. Accessible via cycle button, CV, or right-click radio list.
+- **CV order input** — 0..10 V picks one of the 8 presets, quantised with 15% hysteresis on zone boundaries.
+- **8 factory permutations** — straight, full reverse, pair swap, inner swap, outer/inner reverse, pair rotation, rotate left, rotate right. Cycle button, CV, or right-click radio list.
 - **Fade / Morph transition** — right-click picker. Fade is a 20 ms duck that just hides the routing jump; Morph stretches to a 400 ms audible crossfade where the chip display and audio dissolve into the new permutation together.
 - **Bypass** — bottom-centre gate input above a sticky toggle button. Button latches chain IN → OUT; gate forces bypass while high (stutter-style when tapped). Sends stay active during bypass so effects keep their state warm for re-entry.
-- **Copy / Paste preset** between flow modules, and every preset change, bypass toggle, and paste goes through the undo stack.
+- **Copy / Paste preset** between flow modules. Every preset change, bypass toggle, and paste goes through the undo stack.
 - Each chain hop costs 1 sample of latency (≈0.09 ms total at 44.1 kHz) because Rack can't topologically order cable loops; inaudible in practice.
 
 4 HP. Persists preset, bypass state, and fade mode in JSON.

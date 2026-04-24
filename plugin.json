@@ -77,9 +77,19 @@
       ]
     },
     {
+      "slug": "qmodplus",
+      "name": "qmod+",
+      "description": "4 HP 14-slot modulation source with per-column mode cycle buttons. Five modes (random triggers, triggered S+H, smooth random, S+H, LFO) selectable per column; each slot can diverge. Joins a Q-array with neighbouring qmap / qmod modules.",
+      "tags": [
+        "LFO",
+        "Random",
+        "Utility"
+      ]
+    },
+    {
       "slug": "qmod",
       "name": "qmod",
-      "description": "Fourteen mod-source outputs (LFO / S+H / smooth random) spread slow-to-fast à la Ochd. When placed next to a qmap, each output auto-feeds the matching aux input.",
+      "description": "6 HP 14-slot modulation source. Per-column mode cycle buttons + a per-row log-scaled rate knob strip so every pair of slots can be hand-tuned relative to the base rate. Apply-stagger menu action writes a log-spread into the row knobs. Joins a Q-array with neighbouring qmap / qmod+ modules.",
       "tags": [
         "LFO",
         "Random",
@@ -88,7 +98,7 @@
     },
     {
       "slug": "flow",
-      "name": "flow (beta)",
+      "name": "flow",
       "description": "Routing switcher for a four-effect chain. Wire send/return pairs to four external effects, then cycle or CV-select between eight permutation presets to rearrange processing order on the fly. Fade or morph between presets; bypass gate for momentary chain-dry stutter.",
       "tags": [
         "Effect",

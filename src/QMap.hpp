@@ -29,10 +29,20 @@ struct QMapModule : Module {
     // writer, many readers, UI only needs a visually-plausible value.
     float modLevel[NUM_SLOTS] = {};
 
+    // True when a slot is receiving signal — either a cable is patched or
+    // the array is auto-feeding. Used by the UI so unmapped slots can still
+    // glow (white) to indicate incoming CV in an array.
+    bool hasSignal[NUM_SLOTS] = {};
+
     // When a qmap is flanked by qmods on BOTH sides, which one feeds the aux
     // inputs: 0 = left (default), 1 = right. Ignored when only one side has
     // a qmod; the available one is used automatically.
     int qmodFavour = 0;
+
+    // Array membership. When false, this module is a singleton — won't
+    // join the contiguous Q-array containing it, and neighbouring Q
+    // modules skip it when walking.
+    bool inArray = true;
 
     // -1 when no slot is armed, otherwise the slot awaiting touch-assign.
     int armedSlot = -1;
