@@ -562,17 +562,22 @@ struct QModOutputPort : ThemedPJ301MPort {
 
     void draw(const DrawArgs& args) override {
         ThemedPJ301MPort::draw(args);
-        if (!module) return;
-        // Dot shows when this qmod shares a Q-array with any qmap.
-        bool linked = false;
+        if (!module || slot < 0) return;
+        // Dot shows only when this slot's global index matches a qmap slot
+        // in the array — i.e. this specific output is actively auto-feeding.
+        int modBase = lc::arraySlotBase(module);
+        int globalIdx = modBase + slot;
+        bool paired = false;
         auto arr = lc::walkArray(module);
         for (auto* m : arr) {
-            if (m && m != module && m->model == modelQMap) {
-                linked = true;
+            if (!m || m == module || m->model != modelQMap) continue;
+            int qmapBase = lc::arraySlotBase(m);
+            if (globalIdx >= qmapBase && globalIdx < qmapBase + QModModule::NUM_SLOTS) {
+                paired = true;
                 break;
             }
         }
-        if (!linked) return;
+        if (!paired) return;
         float cx = box.size.x / 2.f, cy = box.size.y / 2.f;
         float r = box.size.x * 0.08f;
         nvgBeginPath(args.vg);

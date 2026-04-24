@@ -659,22 +659,47 @@ struct MenuSlider : ui::Slider {
     ~MenuSlider() { delete quantity; }
 };
 
+// Trigger-input jack with an inline Input-jack submenu so the mode picker
+// is reachable with a right-click directly on the port.
+struct TrigInputPort : lc::WhiteRingPJ301MPort {
+    QModPlusModule* qm = nullptr;
+    void appendContextMenu(ui::Menu* menu) override {
+        if (!qm) return;
+        menu->addChild(new MenuSeparator);
+        menu->addChild(createMenuLabel("Input jack mode"));
+        auto addInput = [&](const char* label, int v) {
+            menu->addChild(createCheckMenuItem(label, "",
+                [=]() { return qm->inputMode == v; },
+                [=]() { qm->inputMode = v; }));
+        };
+        addInput("Trigger / resync",   QModPlusModule::INPUT_TRIGGER);
+        addInput("Gate (run/freeze)",  QModPlusModule::INPUT_GATE);
+        addInput("CV → rate",          QModPlusModule::INPUT_CV_RATE);
+        addInput("CV → smoothness",    QModPlusModule::INPUT_CV_SMOOTHNESS);
+        addInput("CV → mode",          QModPlusModule::INPUT_CV_MODE);
+    }
+};
+
 struct QModPlusOutputPort : ThemedPJ301MPort {
     QModPlusModule* qm = nullptr;
     int slot = -1;
 
     void draw(const DrawArgs& args) override {
         ThemedPJ301MPort::draw(args);
-        if (!module) return;
-        bool linked = false;
+        if (!module || slot < 0) return;
+        int modBase = lc::arraySlotBase(module);
+        int globalIdx = modBase + slot;
+        bool paired = false;
         auto arr = lc::walkArray(module);
         for (auto* m : arr) {
-            if (m && m != module && m->model == modelQMap) {
-                linked = true;
+            if (!m || m == module || m->model != modelQMap) continue;
+            int qmapBase = lc::arraySlotBase(m);
+            if (globalIdx >= qmapBase && globalIdx < qmapBase + QModPlusModule::NUM_SLOTS) {
+                paired = true;
                 break;
             }
         }
-        if (!linked) return;
+        if (!paired) return;
         float cx = box.size.x / 2.f, cy = box.size.y / 2.f;
         float r = box.size.x * 0.08f;
         nvgBeginPath(args.vg);
@@ -772,8 +797,12 @@ QModPlusWidget::QModPlusWidget(QModPlusModule* module) {
                          mm2px(headerY) - b->box.size.y / 2.f);
         addChild(b);
     }
-    addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
-        mm2px(Vec(rightStripX_mm, headerY)), module, QModPlusModule::IN_TRIG));
+    {
+        auto* trig = createInputCentered<TrigInputPort>(
+            mm2px(Vec(rightStripX_mm, headerY)), module, QModPlusModule::IN_TRIG);
+        trig->qm = module;
+        addInput(trig);
+    }
 
     // 7 rows × 2 columns — same geometry as qmod.
     const float bottomJackY = 106.f;

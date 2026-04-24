@@ -72,28 +72,30 @@ QMapModule::~QMapModule() {
 }
 
 void QMapModule::process(const ProcessArgs& args) {
-    // Auto-assign feed: walk the Q-array containing this qmap and pick the
-    // nearest qmod / qmod+ in the favoured direction. A real cable on an
-    // aux input always wins over the array-feed.
-    rack::engine::Module* modSource = nullptr;
+    // Auto-assign feed: per-slot pairing by global array index. Each qmap
+    // slot at global index (qmapBase + i) maps to the qmod / qmod+ whose
+    // slot range covers that index. A real cable on an aux input always
+    // wins over the array-feed.
+    //
+    // Example — [qmap1][qmap2][qmod]: qmap1 base = 0 (covers globals 0..13),
+    // qmap2 base = 14 (covers 14..27), qmod base = 0 (covers 0..13). So
+    // qmap1 slot 3 (global 3) pairs with qmod slot 3, while qmap2 slot 3
+    // (global 17) has no matching mod source and stays silent.
     auto arr = lc::walkArray(this);
-    if (!arr.empty()) {
-        int myIdx = -1;
-        for (size_t i = 0; i < arr.size(); i++)
-            if (arr[i] == this) { myIdx = (int)i; break; }
-        auto isModSource = [](rack::engine::Module* m) {
-            return m && (m->model == modelQMod || m->model == modelQModPlus);
-        };
-        auto searchDir = [&](int step) -> rack::engine::Module* {
-            for (int i = myIdx + step; i >= 0 && i < (int)arr.size(); i += step)
-                if (isModSource(arr[i])) return arr[i];
-            return nullptr;
-        };
-        // qmodFavour == 0 → search left first, then right. 1 → right first.
-        if (myIdx >= 0) {
-            modSource = (qmodFavour == 1) ? searchDir(+1) : searchDir(-1);
-            if (!modSource)
-                modSource = (qmodFavour == 1) ? searchDir(-1) : searchDir(+1);
+    int qmapBase = lc::arraySlotBase(this);
+    struct Source { rack::engine::Module* m; int localSlot; };
+    Source sources[NUM_SLOTS];
+    for (int i = 0; i < NUM_SLOTS; i++) sources[i] = { nullptr, 0 };
+    for (int i = 0; i < NUM_SLOTS; i++) {
+        int globalIdx = qmapBase + i;
+        for (auto* m : arr) {
+            if (!m || m == this) continue;
+            if (m->model != modelQMod && m->model != modelQModPlus) continue;
+            int modBase = lc::arraySlotBase(m);
+            if (globalIdx >= modBase && globalIdx < modBase + NUM_SLOTS) {
+                sources[i] = { m, globalIdx - modBase };
+                break;
+            }
         }
     }
 
@@ -103,10 +105,10 @@ void QMapModule::process(const ProcessArgs& args) {
         if (inputs[AUX_INPUT + i].isConnected()) {
             v = inputs[AUX_INPUT + i].getVoltage();
             haveSignal = true;
-        } else if (modSource && i < QModModule::NUM_SLOTS) {
+        } else if (sources[i].m) {
             // Both qmod and qmod+ place MOD_OUTPUT at index 0 with
-            // NUM_SLOTS = 14, so a direct output[i] read works for either.
-            v = modSource->outputs[QModModule::MOD_OUTPUT + i].getVoltage();
+            // NUM_SLOTS = 14, so a direct output[localSlot] read works.
+            v = sources[i].m->outputs[QModModule::MOD_OUTPUT + sources[i].localSlot].getVoltage();
             haveSignal = true;
         } else {
             v = 0.f;
@@ -462,20 +464,25 @@ struct QMapInputPort : lc::WhiteRingPJ301MPort {
 
     void draw(const DrawArgs& args) override {
         lc::WhiteRingPJ301MPort::draw(args);
-        if (!module) return;
-        // Dot shows when this qmap shares a Q-array with any qmod / qmod+ —
-        // i.e. there's at least one mod source somewhere in the chain that
-        // could feed our inputs.
-        bool linked = false;
+        if (!module || slot < 0) return;
+        // Dot shows only when this specific slot is paired with a qmod
+        // slot at the same global array index. Empty array cells (e.g. the
+        // 2nd qmap's slots when there's only one qmod in the array) stay
+        // un-dotted to reflect that they cannot be fed.
+        int qmapBase = lc::arraySlotBase(module);
+        int globalIdx = qmapBase + slot;
+        bool paired = false;
         auto arr = lc::walkArray(module);
         for (auto* m : arr) {
-            if (m && m != module
-                && (m->model == modelQMod || m->model == modelQModPlus)) {
-                linked = true;
+            if (!m || m == module) continue;
+            if (m->model != modelQMod && m->model != modelQModPlus) continue;
+            int modBase = lc::arraySlotBase(m);
+            if (globalIdx >= modBase && globalIdx < modBase + QMapModule::NUM_SLOTS) {
+                paired = true;
                 break;
             }
         }
-        if (!linked) return;
+        if (!paired) return;
         float cx = box.size.x / 2.f, cy = box.size.y / 2.f;
         float r = box.size.x * 0.08f;
         nvgBeginPath(args.vg);
