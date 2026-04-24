@@ -1,4 +1,3 @@
-#include "QMod.hpp"
 #include "QModPlus.hpp"
 #include "QArray.hpp"
 #include "Theme.hpp"
@@ -11,20 +10,20 @@
 
 // Module-scope clipboard for qmod. Copy captures dataToJson; paste applies
 // it via dataFromJson on the target qmod.
-static json_t* g_qmodClipboard = nullptr;
+static json_t* g_qmodPlusClipboard = nullptr;
 
 namespace {
-struct QModJsonAction : rack::history::ModuleAction {
+struct QModPlusJsonAction : rack::history::ModuleAction {
     json_t* oldJ = nullptr;
     json_t* newJ = nullptr;
-    ~QModJsonAction() {
+    ~QModPlusJsonAction() {
         if (oldJ) json_decref(oldJ);
         if (newJ) json_decref(newJ);
     }
     void apply(json_t* j) {
         if (!j) return;
         rack::engine::Module* m = APP->engine->getModule(moduleId);
-        QModModule* qm = dynamic_cast<QModModule*>(m);
+        QModPlusModule* qm = dynamic_cast<QModPlusModule*>(m);
         if (qm) qm->dataFromJson(j);
     }
     void undo() override { apply(oldJ); }
@@ -32,9 +31,9 @@ struct QModJsonAction : rack::history::ModuleAction {
 };
 }
 
-static void pushQModJsonAction(QModModule* qm, json_t* before, const char* name) {
+static void pushQModPlusJsonAction(QModPlusModule* qm, json_t* before, const char* name) {
     if (!qm || !before) { if (before) json_decref(before); return; }
-    QModJsonAction* a = new QModJsonAction;
+    QModPlusJsonAction* a = new QModPlusJsonAction;
     a->moduleId = qm->id;
     a->name = name ? name : "qmod change";
     a->oldJ = before;
@@ -44,9 +43,17 @@ static void pushQModJsonAction(QModModule* qm, json_t* before, const char* name)
 
 // ─── Module ─────────────────────────────────────────────────────────────────
 
-QModModule::QModModule() {
-    config(0, NUM_INPUTS, NUM_OUTPUTS, 0);
+QModPlusModule::QModPlusModule() {
+    config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, 0);
+    configInput(IN_TRIG, "Trigger / resync");
+    // Per-row rate multiplier knob. Log-scaled via displayBase so the knob's
+    // centre position reads as 1× (no change), left as 0.1× and right as 10×.
+    for (int r = 0; r < NUM_ROWS; r++) {
+        configParam(RATE_KNOB + r, -1.f, 1.f, 0.f,
+                    string::f("Row %d rate", r + 1), "×", 10.f, 1.f);
+    }
     for (int i = 0; i < NUM_SLOTS; i++) {
+        // Even slots = left column, odd = right column.
         slotMode[i] = (i % 2 == 0) ? modeL : modeR;
         range[i] = RANGE_BI_5;
         attenuator[i] = 1.f;
@@ -65,15 +72,16 @@ QModModule::QModModule() {
     }
 }
 
-void QModModule::cycleColumnMode(int col) {
+void QModPlusModule::cycleColumnMode(int col) {
     int& m = (col == 0) ? modeL : modeR;
     m = (m + 1) % NUM_MODES;
+    // Broadcast to this column only (even slots = left, odd = right).
     for (int i = 0; i < NUM_SLOTS; i++) {
         if ((i % 2) == col) slotMode[i] = m;
     }
 }
 
-void QModModule::setColumnMode(int col, int newMode) {
+void QModPlusModule::setColumnMode(int col, int newMode) {
     int& m = (col == 0) ? modeL : modeR;
     m = math::clamp(newMode, 0, (int)NUM_MODES - 1);
     for (int i = 0; i < NUM_SLOTS; i++) {
@@ -81,39 +89,74 @@ void QModModule::setColumnMode(int col, int newMode) {
     }
 }
 
-void QModModule::cycleSlotMode(int slot) {
+void QModPlusModule::cycleSlotMode(int slot) {
     if (slot < 0 || slot >= NUM_SLOTS) return;
     slotMode[slot] = (slotMode[slot] + 1) % NUM_MODES;
 }
 
-float QModModule::frequencyHz(int slot) {
-    float base = globalRate;
-    float freq = base;
-    if (rateSpread && NUM_SLOTS > 1) {
-        float r = math::clamp(spreadRatio, 1e-4f, 1.f);
-        float t = (float)slot / (float)(NUM_SLOTS - 1);
-        freq = base * std::pow(r, t);
+void QModPlusModule::resyncAll() {
+    // Trigger input rising edge — behaviour depends on each slot's mode.
+    for (int i = 0; i < NUM_SLOTS; i++) {
+        switch (slotMode[i]) {
+            case MODE_LFO:
+                phase[i] = 0.f;
+                break;
+            case MODE_SH:
+                shCounter[i] = 0.f;      // resample on next process step
+                break;
+            case MODE_SMOOTH:
+                smoothCounter[i] = 0.f;  // pick new target on next step
+                break;
+            case MODE_RAND_TRIG:
+                trigCounter[i] = 0.f;    // fire next tick
+                break;
+            case MODE_TRIG_SH:
+                // Triggered S+H has no internal clock — the trigger input IS
+                // the clock. Sample a fresh value right now.
+                shValue[i] = random::uniform();
+                break;
+        }
     }
-    // If the same Q-array contains a qmod+ to the left of us (leftmost
-    // wins), pick up this row's knob value from it — that's how row knobs
-    // propagate across multiple qmods in an array.
+}
+
+float QModPlusModule::frequencyHz(int slot) {
+    float base = (rateOverride >= 0.f) ? rateOverride : globalRate;
+    // Per-row knob — but when this qmod+ shares an array with another,
+    // leftmost wins. So we look up row knobs on whichever qmod+ is first
+    // in the array; that could be us or a neighbour.
     auto arr = lc::walkArray(this);
+    QModPlusModule* src = this;
     for (auto* m : arr) {
         if (m && m->model == modelQModPlus) {
-            auto* qmp = dynamic_cast<QModPlusModule*>(m);
-            if (!qmp) break;
-            int row = slot / 2;
-            if (row >= 0 && row < QModPlusModule::NUM_ROWS) {
-                float knobV = qmp->params[QModPlusModule::RATE_KNOB + row].getValue();
-                freq *= std::pow(10.f, knobV);
-            }
+            src = dynamic_cast<QModPlusModule*>(m);
             break;
         }
     }
-    return freq;
+    if (!src) src = this;
+    int row = slot / 2;
+    float knobV = src->params[RATE_KNOB + row].getValue();
+    return base * std::pow(10.f, knobV);
 }
 
-float QModModule::mapToVoltage(int slot, float v01) const {
+void QModPlusModule::applyStaggerToKnobs() {
+    // Write log-spread multipliers into the row knobs. Row 0 lands on 1×
+    // (knob value 0), row NUM_ROWS-1 lands on spreadRatio× (knob value
+    // log10(spreadRatio)). Intermediate rows interpolate log-linearly.
+    float r = math::clamp(spreadRatio, 1e-4f, 1.f);
+    float lo = std::log10(r);   // e.g. -1 for spreadRatio = 0.1
+    for (int row = 0; row < NUM_ROWS; row++) {
+        float t = (NUM_ROWS > 1) ? (float)row / (float)(NUM_ROWS - 1) : 0.f;
+        float knobV = math::clamp(lo * t, -1.f, 1.f);
+        params[RATE_KNOB + row].setValue(knobV);
+    }
+}
+
+void QModPlusModule::resetRowKnobs() {
+    for (int row = 0; row < NUM_ROWS; row++)
+        params[RATE_KNOB + row].setValue(0.f);
+}
+
+float QModPlusModule::mapToVoltage(int slot, float v01) const {
     switch (range[slot]) {
         case RANGE_UNI_10: return v01 * 10.f;
         case RANGE_UNI_5:  return v01 * 5.f;
@@ -125,10 +168,69 @@ float QModModule::mapToVoltage(int slot, float v01) const {
     return 0.f;
 }
 
-void QModModule::process(const ProcessArgs& args) {
-    // No trigger/CV input any more — all behaviour comes from the two column
-    // mode buttons and the right-click menu.
-    float activeSmoothness = smoothness;
+void QModPlusModule::process(const ProcessArgs& args) {
+    bool gateFrozen = false;
+
+    // Default both CV overrides off each sample; the switch below turns them
+    // on if the CV is live. This keeps the menu-set values authoritative when
+    // the cable's removed or the input mode is changed.
+    rateOverride = -1.f;
+    smoothnessOverride = -1.f;
+
+    if (inputs[IN_TRIG].isConnected()) {
+        float iv = inputs[IN_TRIG].getVoltage();
+        // Accept both unipolar (0..10V) and bipolar (-5..+5V) sources by
+        // folding the signal into a 0..1 window centred on 0V.
+        float t = math::clamp((iv + 5.f) / 10.f, 0.f, 1.f);
+
+        switch (inputMode) {
+            case INPUT_TRIGGER: {
+                if (trigInEdge.process(iv, 0.1f, 1.f)) resyncAll();
+                break;
+            }
+            case INPUT_GATE: {
+                // Schmitt semantics on the gate so noisy edges don't flicker
+                // the freeze state. 0.1V low, 1V high.
+                if (iv >= 1.f)      gateFrozen = false;
+                else if (iv < 0.1f) gateFrozen = true;
+                else                gateFrozen = (iv < 0.5f);
+                break;
+            }
+            case INPUT_CV_RATE: {
+                // Full window maps to the slider's full range (0.01..10 Hz).
+                // Bipolar -5V → slowest, +5V → fastest; unipolar 0V → slowest,
+                // 10V → fastest. Either works without freezing half the cycle.
+                rateOverride = 0.01f + t * (10.f - 0.01f);
+                break;
+            }
+            case INPUT_CV_SMOOTHNESS: {
+                smoothnessOverride = t;
+                break;
+            }
+            case INPUT_CV_MODE: {
+                // CV → mode drives BOTH columns so a single CV can still
+                // sweep the whole bank through its modes. Menu and per-slot
+                // clicks can still diverge from this afterwards.
+                int newMode = (int)std::min((float)(NUM_MODES - 1),
+                                            t * (float)NUM_MODES);
+                if (newMode != modeL) setColumnMode(0, newMode);
+                if (newMode != modeR) setColumnMode(1, newMode);
+                break;
+            }
+        }
+    }
+
+    // Live value to use for smooth-random slew shaping. Same override rule.
+    float activeSmoothness = (smoothnessOverride >= 0.f)
+        ? smoothnessOverride : smoothness;
+
+    if (gateFrozen) {
+        // Gate low — freeze phases/counters and keep the current output
+        // voltages on the jacks. modLevel is left alone so the LEDs hold
+        // their brightness too.
+        return;
+    }
+
     const float sr = args.sampleRate;
 
     for (int i = 0; i < NUM_SLOTS; i++) {
@@ -244,16 +346,16 @@ void QModModule::process(const ProcessArgs& args) {
     }
 }
 
-json_t* QModModule::dataToJson() {
+json_t* QModPlusModule::dataToJson() {
     json_t* root = json_object();
     json_object_set_new(root, "modeL", json_integer(modeL));
     json_object_set_new(root, "modeR", json_integer(modeR));
+    json_object_set_new(root, "inputMode", json_integer(inputMode));
     json_object_set_new(root, "lfoShape", json_integer(lfoShape));
-    json_object_set_new(root, "inArray", json_boolean(inArray));
-    json_object_set_new(root, "rateSpread", json_boolean(rateSpread));
     json_object_set_new(root, "spreadRatio", json_real(spreadRatio));
     json_object_set_new(root, "globalRate", json_real(globalRate));
     json_object_set_new(root, "smoothness", json_real(smoothness));
+    json_object_set_new(root, "inArray", json_boolean(inArray));
     json_t* attensJ = json_array();
     json_t* offsetsJ = json_array();
     for (int i = 0; i < NUM_SLOTS; i++) {
@@ -273,23 +375,23 @@ json_t* QModModule::dataToJson() {
     return root;
 }
 
-void QModModule::dataFromJson(json_t* root) {
+void QModPlusModule::dataFromJson(json_t* root) {
     if (json_t* j = json_object_get(root, "modeL"))
         modeL = (int)json_integer_value(j);
     if (json_t* j = json_object_get(root, "modeR"))
         modeR = (int)json_integer_value(j);
+    if (json_t* j = json_object_get(root, "inputMode"))
+        inputMode = (int)json_integer_value(j);
     if (json_t* j = json_object_get(root, "lfoShape"))
         lfoShape = (int)json_integer_value(j);
-    if (json_t* j = json_object_get(root, "inArray"))
-        inArray = json_boolean_value(j);
-    if (json_t* j = json_object_get(root, "rateSpread"))
-        rateSpread = json_boolean_value(j);
     if (json_t* j = json_object_get(root, "spreadRatio"))
         spreadRatio = json_real_value(j);
     if (json_t* j = json_object_get(root, "globalRate"))
         globalRate = json_real_value(j);
     if (json_t* j = json_object_get(root, "smoothness"))
         smoothness = json_real_value(j);
+    if (json_t* j = json_object_get(root, "inArray"))
+        inArray = json_boolean_value(j);
     for (int i = 0; i < NUM_SLOTS; i++) { attenuator[i] = 1.f; offset[i] = 0.f; }
     if (json_t* a = json_object_get(root, "attens")) {
         size_t n = std::min((size_t)NUM_SLOTS, json_array_size(a));
@@ -304,8 +406,8 @@ void QModModule::dataFromJson(json_t* root) {
         for (size_t i = 0; i < n; i++)
             range[i] = (int)json_integer_value(json_array_get(rangesJ, i));
     }
-    // Default every slot to its column's mode first, so legacy saves with
-    // no slotModes array still produce sensible state.
+    // Default every slot to its column's mode if the slotModes array is
+    // missing (e.g. reading from an older save or a hand-edited JSON).
     for (int i = 0; i < NUM_SLOTS; i++)
         slotMode[i] = (i % 2 == 0) ? modeL : modeR;
     if (json_t* modesJ = json_object_get(root, "slotModes")) {
@@ -319,7 +421,7 @@ void QModModule::dataFromJson(json_t* root) {
 
 namespace {
 
-struct QModBackground : widget::Widget {
+struct QModPlusBackground : widget::Widget {
     void draw(const DrawArgs& args) override {
         nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
@@ -328,7 +430,7 @@ struct QModBackground : widget::Widget {
     }
 };
 
-struct QModLabel : widget::Widget {
+struct QModPlusLabel : widget::Widget {
     std::string text;
     float fontSize = 7.f;
     void draw(const DrawArgs& args) override {
@@ -345,7 +447,7 @@ struct QModLabel : widget::Widget {
     }
 };
 
-// Dynamic slot-number label for qmod. Reads lc::arraySlotBase each frame.
+// Dynamic slot-number label for qmod+. Reads lc::arraySlotBase each frame.
 struct SlotNumberLabel : widget::Widget {
     engine::Module* module = nullptr;
     int slot = 0;
@@ -363,7 +465,7 @@ struct SlotNumberLabel : widget::Widget {
     }
 };
 
-struct QModLogo : widget::Widget {
+struct QModPlusLogo : widget::Widget {
     std::string path, darkPath, greyPath;
     void draw(const DrawArgs& args) override {
         std::string use = lc::logoAsset(path, darkPath, greyPath);
@@ -430,11 +532,11 @@ static void drawCenterDotGlow(NVGcontext* vg, float w, float h, NVGcolor color, 
 
 static NVGcolor modeColor(int m) {
     switch (m) {
-        case QModModule::MODE_RAND_TRIG: return nvgRGB(220, 70, 70);   // red
-        case QModModule::MODE_TRIG_SH:   return nvgRGB(255, 140, 40);  // orange
-        case QModModule::MODE_SMOOTH:    return nvgRGB(70, 200, 210);  // cyan
-        case QModModule::MODE_SH:        return nvgRGB(180, 80, 220);  // purple
-        case QModModule::MODE_LFO:       return nvgRGB(60, 210, 90);   // green
+        case QModPlusModule::MODE_RAND_TRIG: return nvgRGB(220, 70, 70);   // red
+        case QModPlusModule::MODE_TRIG_SH:   return nvgRGB(255, 140, 40);  // orange
+        case QModPlusModule::MODE_SMOOTH:    return nvgRGB(70, 200, 210);  // cyan
+        case QModPlusModule::MODE_SH:        return nvgRGB(180, 80, 220);  // purple
+        case QModPlusModule::MODE_LFO:       return nvgRGB(60, 210, 90);   // green
     }
     return nvgRGB(180, 180, 180);
 }
@@ -443,7 +545,7 @@ static NVGcolor modeColor(int m) {
 // master button's broadcast, or by clicking this button to diverge from the
 // global mode). Left-click cycles just this slot.
 struct SlotModeButton : widget::OpaqueWidget {
-    QModModule* qm = nullptr;
+    QModPlusModule* qm = nullptr;
     int slot = -1;
     float dotScale = 0.55f;
 
@@ -483,16 +585,17 @@ struct SlotModeButton : widget::OpaqueWidget {
         if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
             json_t* before = qm->dataToJson();
             qm->cycleSlotMode(slot);
-            pushQModJsonAction(qm, before, "qmod slot mode");
+            pushQModPlusJsonAction(qm, before, "qmod slot mode");
             e.consume(this);
         }
     }
 };
 
-// Column mode-cycle button. Left-click cycles the modes for just this
-// column (0 = left / even slots, 1 = right / odd slots).
+// Column mode-cycle button. Left-click steps through the modes for just
+// this column (left=0 or right=1). Each column has its own button and LED
+// colour tracking its own mode.
 struct ModeCycleButton : widget::OpaqueWidget {
-    QModModule* qm = nullptr;
+    QModPlusModule* qm = nullptr;
     int col = 0;
     float dotScale = 0.50f;
 
@@ -524,7 +627,7 @@ struct ModeCycleButton : widget::OpaqueWidget {
         if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
             json_t* before = qm->dataToJson();
             qm->cycleColumnMode(col);
-            pushQModJsonAction(qm, before, col == 0 ? "qmod left mode" : "qmod right mode");
+            pushQModPlusJsonAction(qm, before, col == 0 ? "qmod+ left mode" : "qmod+ right mode");
             e.consume(this);
         }
     }
@@ -556,14 +659,13 @@ struct MenuSlider : ui::Slider {
     ~MenuSlider() { delete quantity; }
 };
 
-struct QModOutputPort : ThemedPJ301MPort {
-    QModModule* qm = nullptr;
+struct QModPlusOutputPort : ThemedPJ301MPort {
+    QModPlusModule* qm = nullptr;
     int slot = -1;
 
     void draw(const DrawArgs& args) override {
         ThemedPJ301MPort::draw(args);
         if (!module) return;
-        // Dot shows when this qmod shares a Q-array with any qmap.
         bool linked = false;
         auto arr = lc::walkArray(module);
         for (auto* m : arr) {
@@ -590,12 +692,12 @@ struct QModOutputPort : ThemedPJ301MPort {
                 [=]() { return qm && qm->range[slot] == r; },
                 [=]() { if (qm) qm->range[slot] = r; }));
         };
-        addRange("Unipolar 0..10V", QModModule::RANGE_UNI_10);
-        addRange("Unipolar 0..5V",  QModModule::RANGE_UNI_5);
-        addRange("Unipolar 0..1V",  QModModule::RANGE_UNI_1);
-        addRange("Bipolar -10..10V", QModModule::RANGE_BI_10);
-        addRange("Bipolar -5..5V",   QModModule::RANGE_BI_5);
-        addRange("Bipolar -1..1V",   QModModule::RANGE_BI_1);
+        addRange("Unipolar 0..10V", QModPlusModule::RANGE_UNI_10);
+        addRange("Unipolar 0..5V",  QModPlusModule::RANGE_UNI_5);
+        addRange("Unipolar 0..1V",  QModPlusModule::RANGE_UNI_1);
+        addRange("Bipolar -10..10V", QModPlusModule::RANGE_BI_10);
+        addRange("Bipolar -5..5V",   QModPlusModule::RANGE_BI_5);
+        addRange("Bipolar -1..1V",   QModPlusModule::RANGE_BI_1);
 
         menu->addChild(new MenuSeparator);
         menu->addChild(createMenuLabel("Attenuator"));
@@ -611,11 +713,13 @@ struct QModOutputPort : ThemedPJ301MPort {
 
 // ─── Widget ─────────────────────────────────────────────────────────────────
 
-QModWidget::QModWidget(QModModule* module) {
+QModPlusWidget::QModPlusWidget(QModPlusModule* module) {
     setModule(module);
-    box.size = Vec(RACK_GRID_WIDTH * 4, RACK_GRID_HEIGHT);
+    // 6 HP — 4 HP of qmod's existing layout on the left, 2 HP of rate-knob
+    // strip on the right.
+    box.size = Vec(RACK_GRID_WIDTH * 6, RACK_GRID_HEIGHT);
 
-    QModBackground* bg = new QModBackground;
+    QModPlusBackground* bg = new QModPlusBackground;
     bg->box.size = box.size;
     addChild(bg);
 
@@ -627,23 +731,28 @@ QModWidget::QModWidget(QModModule* module) {
     border->box.size = box.size;
     addChild(border);
 
-    const float panelW_mm = box.size.x / mm2px(1.f);
-    const float colL_mm = panelW_mm * 0.25f;
-    const float colR_mm = panelW_mm * 0.75f;
+    // Left 4 HP mirrors qmod exactly — same column centres, same row pitch
+    // — so a qmod+ lines up with neighbouring qmap/qmod modules. The new
+    // 2 HP strip sits at x > 20.32 mm.
+    const float qmodPanelW_mm = 4.f * (float)RACK_GRID_WIDTH / mm2px(1.f);
+    const float colL_mm = qmodPanelW_mm * 0.25f;
+    const float colR_mm = qmodPanelW_mm * 0.75f;
+    // Right strip: centred in the new 2 HP area (x = 20.32..30.48 mm).
+    const float rightStripX_mm = qmodPanelW_mm + (2.f * (float)RACK_GRID_WIDTH / mm2px(1.f)) * 0.5f;
 
-    // Title — pulled up slightly so the header row (button + trigger input)
-    // has space to sit at the full PJ301M height without colliding.
+    // Title — same y as qmod. Centred across the full 6 HP panel so it's
+    // clearly visible.
     {
-        QModLabel* lab = new QModLabel;
-        lab->text = "qmod";
+        QModPlusLabel* lab = new QModPlusLabel;
+        lab->text = "qmod+";
         lab->fontSize = 7.f;
         lab->box.size = Vec(box.size.x, mm2px(3.f));
         lab->box.pos = Vec(0, mm2px(7.f));
         addChild(lab);
     }
 
-    // Header row: two per-column mode-cycle buttons — one above each output
-    // column — centred on y = 14.5 mm. The old trigger/CV jack is gone.
+    // Header row: two column mode-cycle buttons side by side over the
+    // output columns, trigger input moved to the new right strip.
     const float headerY = 14.5f;
     {
         ModeCycleButton* b = new ModeCycleButton;
@@ -663,15 +772,16 @@ QModWidget::QModWidget(QModModule* module) {
                          mm2px(headerY) - b->box.size.y / 2.f);
         addChild(b);
     }
+    addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
+        mm2px(Vec(rightStripX_mm, headerY)), module, QModPlusModule::IN_TRIG));
 
-    // 7 rows × 2 columns — identical geometry to qmap so both modules line up
-    // row-for-row when placed side by side.
+    // 7 rows × 2 columns — same geometry as qmod.
     const float bottomJackY = 106.f;
-    const int numRows = QModModule::NUM_SLOTS / 2;
+    const int numRows = QModPlusModule::NUM_ROWS;
     const float rowStep = 13.f;
     const float btnAboveJack = 6.5f;
     const float btnSize = 2.6f;
-    for (int i = 0; i < QModModule::NUM_SLOTS; i++) {
+    for (int i = 0; i < QModPlusModule::NUM_SLOTS; i++) {
         int row = i / 2;
         int col = i % 2;
         float jackY = bottomJackY - (numRows - 1 - row) * rowStep;
@@ -694,16 +804,25 @@ QModWidget::QModWidget(QModModule* module) {
                            mm2px(jackY - btnAboveJack) - lbl->box.size.y / 2.f);
         addChild(lbl);
 
-        QModOutputPort* port = createOutputCentered<QModOutputPort>(
-            mm2px(Vec(cx, jackY)), module, QModModule::MOD_OUTPUT + i);
+        QModPlusOutputPort* port = createOutputCentered<QModPlusOutputPort>(
+            mm2px(Vec(cx, jackY)), module, QModPlusModule::MOD_OUTPUT + i);
         port->qm = module;
         port->slot = i;
         addOutput(port);
     }
 
+    // Per-row rate knobs — one Trimpot in the right strip at each row's jack
+    // y. Centre-click resets to 0 (= 1× multiplier).
+    for (int r = 0; r < QModPlusModule::NUM_ROWS; r++) {
+        float jackY = bottomJackY - (numRows - 1 - r) * rowStep;
+        addParam(createParamCentered<Trimpot>(
+            mm2px(Vec(rightStripX_mm, jackY)), module,
+            QModPlusModule::RATE_KNOB + r));
+    }
+
     // Logo.
     {
-        QModLogo* logo = new QModLogo;
+        QModPlusLogo* logo = new QModPlusLogo;
         logo->path     = asset::plugin(pluginInstance, "res/lc-icon-new.png");
         logo->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
         logo->greyPath = asset::plugin(pluginInstance, "res/lc-icon-grey.png");
@@ -713,18 +832,18 @@ QModWidget::QModWidget(QModModule* module) {
     }
 }
 
-void QModWidget::appendContextMenu(Menu* menu) {
-    QModModule* qm = dynamic_cast<QModModule*>(module);
+void QModPlusWidget::appendContextMenu(Menu* menu) {
+    QModPlusModule* qm = dynamic_cast<QModPlusModule*>(module);
     if (!qm) return;
 
     menu->addChild(new MenuSeparator);
     auto modeLabel = [](int m) -> std::string {
         switch (m) {
-            case QModModule::MODE_RAND_TRIG: return "Random triggers";
-            case QModModule::MODE_TRIG_SH:   return "Triggered S+H";
-            case QModModule::MODE_SMOOTH:    return "Smooth random";
-            case QModModule::MODE_SH:        return "Sample & hold";
-            case QModModule::MODE_LFO:       return "LFO";
+            case QModPlusModule::MODE_RAND_TRIG: return "Random triggers";
+            case QModPlusModule::MODE_TRIG_SH:   return "Triggered S+H (ext. clock)";
+            case QModPlusModule::MODE_SMOOTH:    return "Smooth random";
+            case QModPlusModule::MODE_SH:        return "Sample & hold";
+            case QModPlusModule::MODE_LFO:       return "LFO";
         }
         return "";
     };
@@ -738,14 +857,14 @@ void QModWidget::appendContextMenu(Menu* menu) {
                     },
                     [=]() { qm->setColumnMode(col, m); }));
             };
-            addMode(QModModule::MODE_RAND_TRIG);
-            addMode(QModModule::MODE_TRIG_SH);
-            addMode(QModModule::MODE_SMOOTH);
-            addMode(QModModule::MODE_SH);
-            addMode(QModModule::MODE_LFO);
+            addMode(QModPlusModule::MODE_RAND_TRIG);
+            addMode(QModPlusModule::MODE_TRIG_SH);
+            addMode(QModPlusModule::MODE_SMOOTH);
+            addMode(QModPlusModule::MODE_SH);
+            addMode(QModPlusModule::MODE_LFO);
         };
     };
-    menu->addChild(createSubmenuItem("Left column mode",  modeLabel(qm->modeL), modePicker(0)));
+    menu->addChild(createSubmenuItem("Left column mode", modeLabel(qm->modeL), modePicker(0)));
     menu->addChild(createSubmenuItem("Right column mode", modeLabel(qm->modeR), modePicker(1)));
     menu->addChild(createMenuItem("Set both columns to left's mode", "", [=]() {
         qm->setColumnMode(1, qm->modeL);
@@ -754,10 +873,10 @@ void QModWidget::appendContextMenu(Menu* menu) {
     menu->addChild(new MenuSeparator);
     menu->addChild(createSubmenuItem("LFO waveshape", [=]() {
         switch (qm->lfoShape) {
-            case QModModule::LFO_SINE:     return "Sine";
-            case QModModule::LFO_TRIANGLE: return "Triangle";
-            case QModModule::LFO_SQUARE:   return "Square";
-            case QModModule::LFO_SAW:      return "Saw";
+            case QModPlusModule::LFO_SINE:     return "Sine";
+            case QModPlusModule::LFO_TRIANGLE: return "Triangle";
+            case QModPlusModule::LFO_SQUARE:   return "Square";
+            case QModPlusModule::LFO_SAW:      return "Saw";
         }
         return "";
     }(), [=](ui::Menu* sub) {
@@ -766,15 +885,13 @@ void QModWidget::appendContextMenu(Menu* menu) {
                 [=]() { return qm->lfoShape == s; },
                 [=]() { qm->lfoShape = s; }));
         };
-        addShape("Sine",     QModModule::LFO_SINE);
-        addShape("Triangle", QModModule::LFO_TRIANGLE);
-        addShape("Square",   QModModule::LFO_SQUARE);
-        addShape("Saw",      QModModule::LFO_SAW);
+        addShape("Sine",     QModPlusModule::LFO_SINE);
+        addShape("Triangle", QModPlusModule::LFO_TRIANGLE);
+        addShape("Square",   QModPlusModule::LFO_SQUARE);
+        addShape("Saw",      QModPlusModule::LFO_SAW);
     }));
 
     menu->addChild(new MenuSeparator);
-    menu->addChild(createBoolPtrMenuItem("Stagger rates (fast → slow)", "", &qm->rateSpread));
-
     menu->addChild(createMenuLabel("Global rate"));
     menu->addChild(new MenuSlider(new FloatQuantity(
         &qm->globalRate, "Rate", " Hz", 0.01f, 10.f, 4.5f, 3)));
@@ -783,30 +900,43 @@ void QModWidget::appendContextMenu(Menu* menu) {
     menu->addChild(new MenuSlider(new FloatQuantity(
         &qm->smoothness, "Smoothness", "", 0.f, 1.f, 0.4f, 2)));
 
-    menu->addChild(createMenuLabel("Stagger spread (slow-end multiplier)"));
+    menu->addChild(new MenuSeparator);
+    menu->addChild(createMenuLabel("Stagger spread (applied to row knobs)"));
     menu->addChild(new MenuSlider(new FloatQuantity(
         &qm->spreadRatio, "Spread", "×", 0.005f, 1.f, 0.1f, 3)));
+    menu->addChild(createMenuItem("Apply stagger to row knobs", "",
+        [=]() {
+            json_t* before = qm->dataToJson();
+            qm->applyStaggerToKnobs();
+            pushQModPlusJsonAction(qm, before, "qmod+ apply stagger");
+        }));
+    menu->addChild(createMenuItem("Reset row knobs to 1×", "",
+        [=]() {
+            json_t* before = qm->dataToJson();
+            qm->resetRowKnobs();
+            pushQModPlusJsonAction(qm, before, "qmod+ reset row knobs");
+        }));
 
     auto rangeChecked = [=](int r) {
         int first = qm->range[0];
-        for (int i = 1; i < QModModule::NUM_SLOTS; i++)
+        for (int i = 1; i < QModPlusModule::NUM_SLOTS; i++)
             if (qm->range[i] != first) return false;
         return first == r;
     };
     auto setAllRange = [=](int r) {
-        for (int i = 0; i < QModModule::NUM_SLOTS; i++) qm->range[i] = r;
+        for (int i = 0; i < QModPlusModule::NUM_SLOTS; i++) qm->range[i] = r;
     };
     auto rangeLabelFor = [=]() -> std::string {
         int first = qm->range[0];
-        for (int i = 1; i < QModModule::NUM_SLOTS; i++)
+        for (int i = 1; i < QModPlusModule::NUM_SLOTS; i++)
             if (qm->range[i] != first) return "Mixed";
         switch (first) {
-            case QModModule::RANGE_UNI_10: return "0..10 V";
-            case QModModule::RANGE_UNI_5:  return "0..5 V";
-            case QModModule::RANGE_UNI_1:  return "0..1 V";
-            case QModModule::RANGE_BI_10:  return "-10..10 V";
-            case QModModule::RANGE_BI_5:   return "-5..5 V";
-            case QModModule::RANGE_BI_1:   return "-1..1 V";
+            case QModPlusModule::RANGE_UNI_10: return "0..10 V";
+            case QModPlusModule::RANGE_UNI_5:  return "0..5 V";
+            case QModPlusModule::RANGE_UNI_1:  return "0..1 V";
+            case QModPlusModule::RANGE_BI_10:  return "-10..10 V";
+            case QModPlusModule::RANGE_BI_5:   return "-5..5 V";
+            case QModPlusModule::RANGE_BI_1:   return "-1..1 V";
         }
         return "";
     };
@@ -818,14 +948,40 @@ void QModWidget::appendContextMenu(Menu* menu) {
                     [=]() { setAllRange(r); }));
             };
             rs->addChild(createMenuLabel("Unipolar"));
-            addRange("0..10 V", QModModule::RANGE_UNI_10);
-            addRange("0..5 V",  QModModule::RANGE_UNI_5);
-            addRange("0..1 V",  QModModule::RANGE_UNI_1);
+            addRange("0..10 V", QModPlusModule::RANGE_UNI_10);
+            addRange("0..5 V",  QModPlusModule::RANGE_UNI_5);
+            addRange("0..1 V",  QModPlusModule::RANGE_UNI_1);
             rs->addChild(new MenuSeparator);
             rs->addChild(createMenuLabel("Bipolar"));
-            addRange("-10..10 V", QModModule::RANGE_BI_10);
-            addRange("-5..5 V",   QModModule::RANGE_BI_5);
-            addRange("-1..1 V",   QModModule::RANGE_BI_1);
+            addRange("-10..10 V", QModPlusModule::RANGE_BI_10);
+            addRange("-5..5 V",   QModPlusModule::RANGE_BI_5);
+            addRange("-1..1 V",   QModPlusModule::RANGE_BI_1);
+        }));
+
+    // How the trigger input jack is read.
+    menu->addChild(new MenuSeparator);
+    auto inputModeLabel = [=]() -> std::string {
+        switch (qm->inputMode) {
+            case QModPlusModule::INPUT_TRIGGER:       return "Trigger / resync";
+            case QModPlusModule::INPUT_GATE:          return "Gate (run/freeze)";
+            case QModPlusModule::INPUT_CV_RATE:       return "CV → rate";
+            case QModPlusModule::INPUT_CV_SMOOTHNESS: return "CV → smoothness";
+            case QModPlusModule::INPUT_CV_MODE:       return "CV → mode";
+        }
+        return "";
+    };
+    menu->addChild(createSubmenuItem("Input jack", inputModeLabel(),
+        [=](ui::Menu* sub) {
+            auto addInput = [&](const char* label, int v) {
+                sub->addChild(createCheckMenuItem(label, "",
+                    [=]() { return qm->inputMode == v; },
+                    [=]() { qm->inputMode = v; }));
+            };
+            addInput("Trigger / resync",   QModPlusModule::INPUT_TRIGGER);
+            addInput("Gate (run/freeze)",  QModPlusModule::INPUT_GATE);
+            addInput("CV → rate",          QModPlusModule::INPUT_CV_RATE);
+            addInput("CV → smoothness",    QModPlusModule::INPUT_CV_SMOOTHNESS);
+            addInput("CV → mode",          QModPlusModule::INPUT_CV_MODE);
         }));
 
     menu->addChild(new MenuSeparator);
@@ -833,17 +989,17 @@ void QModWidget::appendContextMenu(Menu* menu) {
 
     menu->addChild(new MenuSeparator);
     menu->addChild(createMenuItem("Copy settings", "", [=]() {
-        if (g_qmodClipboard) json_decref(g_qmodClipboard);
-        g_qmodClipboard = qm->dataToJson();
+        if (g_qmodPlusClipboard) json_decref(g_qmodPlusClipboard);
+        g_qmodPlusClipboard = qm->dataToJson();
     }));
     menu->addChild(createMenuItem("Paste settings", "",
         [=]() {
-            if (!g_qmodClipboard) return;
+            if (!g_qmodPlusClipboard) return;
             json_t* before = qm->dataToJson();
-            qm->dataFromJson(g_qmodClipboard);
-            pushQModJsonAction(qm, before, "paste qmod settings");
+            qm->dataFromJson(g_qmodPlusClipboard);
+            pushQModPlusJsonAction(qm, before, "paste qmod settings");
         },
-        /*disabled*/ g_qmodClipboard == nullptr));
+        /*disabled*/ g_qmodPlusClipboard == nullptr));
 
     // Adjacency status — shows whether a qmap is currently detected on
     // either side, with a hint when it isn't. Checked at menu-open time.
@@ -866,4 +1022,4 @@ void QModWidget::appendContextMenu(Menu* menu) {
     lc::appendThemeMenu(menu);
 }
 
-Model* modelQMod = createModel<QModModule, QModWidget>("qmod");
+Model* modelQModPlus = createModel<QModPlusModule, QModPlusWidget>("qmodplus");

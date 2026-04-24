@@ -1,5 +1,7 @@
 #include "QMap.hpp"
 #include "QMod.hpp"
+#include "QModPlus.hpp"
+#include "QArray.hpp"
 #include "Theme.hpp"
 #include "LcPorts.hpp"
 
@@ -70,21 +72,30 @@ QMapModule::~QMapModule() {
 }
 
 void QMapModule::process(const ProcessArgs& args) {
-    // Auto-assign feed: if a qmod sits immediately to either side, any of our
-    // aux inputs that lack a cable pull from the matching qmod output. A real
-    // cable always wins. When flanked by qmods on both sides, qmodFavour
-    // picks which one drives; with only one qmod adjacent, that side is used
-    // regardless of the favour setting.
-    QModModule* leftQMod = nullptr;
-    QModModule* rightQMod = nullptr;
-    if (leftExpander.module && leftExpander.module->model == modelQMod)
-        leftQMod = static_cast<QModModule*>(leftExpander.module);
-    if (rightExpander.module && rightExpander.module->model == modelQMod)
-        rightQMod = static_cast<QModModule*>(rightExpander.module);
-    QModModule* qmod = nullptr;
-    if (leftQMod && rightQMod) qmod = (qmodFavour == 1) ? rightQMod : leftQMod;
-    else if (leftQMod)         qmod = leftQMod;
-    else if (rightQMod)        qmod = rightQMod;
+    // Auto-assign feed: walk the Q-array containing this qmap and pick the
+    // nearest qmod / qmod+ in the favoured direction. A real cable on an
+    // aux input always wins over the array-feed.
+    rack::engine::Module* modSource = nullptr;
+    auto arr = lc::walkArray(this);
+    if (!arr.empty()) {
+        int myIdx = -1;
+        for (size_t i = 0; i < arr.size(); i++)
+            if (arr[i] == this) { myIdx = (int)i; break; }
+        auto isModSource = [](rack::engine::Module* m) {
+            return m && (m->model == modelQMod || m->model == modelQModPlus);
+        };
+        auto searchDir = [&](int step) -> rack::engine::Module* {
+            for (int i = myIdx + step; i >= 0 && i < (int)arr.size(); i += step)
+                if (isModSource(arr[i])) return arr[i];
+            return nullptr;
+        };
+        // qmodFavour == 0 → search left first, then right. 1 → right first.
+        if (myIdx >= 0) {
+            modSource = (qmodFavour == 1) ? searchDir(+1) : searchDir(-1);
+            if (!modSource)
+                modSource = (qmodFavour == 1) ? searchDir(-1) : searchDir(+1);
+        }
+    }
 
     for (int i = 0; i < NUM_SLOTS; i++) {
         float v;
@@ -92,8 +103,10 @@ void QMapModule::process(const ProcessArgs& args) {
         if (inputs[AUX_INPUT + i].isConnected()) {
             v = inputs[AUX_INPUT + i].getVoltage();
             haveSignal = true;
-        } else if (qmod && i < QModModule::NUM_SLOTS) {
-            v = qmod->outputs[QModModule::MOD_OUTPUT + i].getVoltage();
+        } else if (modSource && i < QModModule::NUM_SLOTS) {
+            // Both qmod and qmod+ place MOD_OUTPUT at index 0 with
+            // NUM_SLOTS = 14, so a direct output[i] read works for either.
+            v = modSource->outputs[QModModule::MOD_OUTPUT + i].getVoltage();
             haveSignal = true;
         } else {
             v = 0.f;
@@ -153,12 +166,15 @@ json_t* QMapModule::dataToJson() {
     }
     json_object_set_new(root, "slots", slotsJ);
     json_object_set_new(root, "qmodFavour", json_integer(qmodFavour));
+    json_object_set_new(root, "inArray", json_boolean(inArray));
     return root;
 }
 
 void QMapModule::dataFromJson(json_t* root) {
     if (json_t* j = json_object_get(root, "qmodFavour"))
         qmodFavour = (int)json_integer_value(j);
+    if (json_t* j = json_object_get(root, "inArray"))
+        inArray = json_boolean_value(j);
     json_t* slotsJ = json_object_get(root, "slots");
     if (!slotsJ) return;
     size_t n = std::min((size_t)NUM_SLOTS, json_array_size(slotsJ));
@@ -205,6 +221,26 @@ struct QMapLabel : widget::Widget {
         nvgFillColor(args.vg, dark ? nvgRGB(230, 230, 230) : nvgRGB(26, 26, 26));
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
         nvgText(args.vg, box.size.x / 2.f, 0.f, text.c_str(), NULL);
+    }
+};
+
+// Tiny dynamic label that shows this slot's global number inside the
+// current Q-array. Reads lc::arraySlotBase every frame so the number
+// updates live as modules are dragged into or out of the array.
+struct SlotNumberLabel : widget::Widget {
+    engine::Module* module = nullptr;
+    int slot = 0;
+    void draw(const DrawArgs& args) override {
+        if (!module) return;
+        int base = lc::arraySlotBase(module);
+        int n = base + slot + 1;
+        auto font = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
+        if (!font || !font->handle) return;
+        nvgFontFaceId(args.vg, font->handle);
+        nvgFontSize(args.vg, 6.5f);
+        nvgFillColor(args.vg, lc::theme.dark ? nvgRGB(190, 190, 190) : nvgRGB(70, 70, 70));
+        nvgTextAlign(args.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+        nvgText(args.vg, box.size.x, box.size.y / 2.f, string::f("%d", n).c_str(), nullptr);
     }
 };
 
@@ -417,11 +453,18 @@ struct QMapInputPort : lc::WhiteRingPJ301MPort {
     void draw(const DrawArgs& args) override {
         lc::WhiteRingPJ301MPort::draw(args);
         if (!module) return;
+        // Dot shows when this qmap shares a Q-array with any qmod / qmod+ —
+        // i.e. there's at least one mod source somewhere in the chain that
+        // could feed our inputs.
         bool linked = false;
-        if (module->leftExpander.module
-            && module->leftExpander.module->model == modelQMod) linked = true;
-        else if (module->rightExpander.module
-            && module->rightExpander.module->model == modelQMod) linked = true;
+        auto arr = lc::walkArray(module);
+        for (auto* m : arr) {
+            if (m && m != module
+                && (m->model == modelQMod || m->model == modelQModPlus)) {
+                linked = true;
+                break;
+            }
+        }
         if (!linked) return;
         float cx = box.size.x / 2.f, cy = box.size.y / 2.f;
         float r = box.size.x * 0.08f;
@@ -514,13 +557,24 @@ QMapWidget::QMapWidget(QMapModule* module) {
         float jackY = bottomJackY - (numRows - 1 - row) * rowStep;
         float cx = (col == 0) ? colL_mm : colR_mm;
 
+        // Arm button is shifted right of the column centre so the dynamic
+        // slot-number label can sit in the freed space on its left.
+        const float btnShift = 1.5f;
         SlotArmButton* btn = new SlotArmButton;
         btn->qm = module;
         btn->slot = i;
         btn->box.size = mm2px(Vec(btnSize, btnSize));
-        btn->box.pos = Vec(mm2px(cx) - btn->box.size.x / 2.f,
+        btn->box.pos = Vec(mm2px(cx + btnShift) - btn->box.size.x / 2.f,
                            mm2px(jackY - btnAboveJack) - btn->box.size.y / 2.f);
         addChild(btn);
+
+        SlotNumberLabel* lbl = new SlotNumberLabel;
+        lbl->module = module;
+        lbl->slot = i;
+        lbl->box.size = mm2px(Vec(3.f, 3.f));
+        lbl->box.pos = Vec(mm2px(cx - btnShift - 0.2f) - lbl->box.size.x,
+                           mm2px(jackY - btnAboveJack) - lbl->box.size.y / 2.f);
+        addChild(lbl);
 
         QMapInputPort* port = createInputCentered<QMapInputPort>(
             mm2px(Vec(cx, jackY)), module, QMapModule::AUX_INPUT + i);
@@ -601,6 +655,9 @@ void QMapWidget::appendContextMenu(Menu* menu) {
         qm->sequentialArm = false;
         pushQMapJsonAction(qm, before, "clear qmap mappings");
     }));
+
+    menu->addChild(new MenuSeparator);
+    menu->addChild(createBoolPtrMenuItem("Join array with neighbouring LC Q modules", "", &qm->inArray));
 
     menu->addChild(new MenuSeparator);
     menu->addChild(createMenuItem("Copy mappings", "", [=]() {

@@ -87,6 +87,16 @@
       ]
     },
     {
+      "slug": "qmodplus",
+      "name": "qmod+ (beta)",
+      "description": "qmod with extras: separate mode cycle per column, trigger input relocated to a dedicated strip, and a per-row log-scaled rate multiplier knob for on-panel tuning. 6 HP.",
+      "tags": [
+        "LFO",
+        "Random",
+        "Utility"
+      ]
+    },
+    {
       "slug": "flow",
       "name": "flow (beta)",
       "description": "Routing switcher for a four-effect chain. Wire send/return pairs to four external effects, then cycle or CV-select between eight permutation presets to rearrange processing order on the fly. Fade or morph between presets; bypass gate for momentary chain-dry stutter.",

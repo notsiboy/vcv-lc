@@ -2,21 +2,31 @@
 #include "plugin.hpp"
 #include <dsp/digital.hpp>
 
-struct QModModule : Module {
-    static const int NUM_SLOTS = 14;
-    static const int NUM_ROWS  = 7;
+// qmod+ — 6 HP variant of qmod with:
+//   • a separate global mode cycle button per column (left/right)
+//   • the trigger input moved to a new 2 HP strip on the right
+//   • a per-row rate knob in that strip (log-scaled ±1 decade around 1×)
+//
+// Per-slot overrides, LFO shape, input modes, range, atten/offset, fades and
+// slew behaviour all inherit qmod's semantics unchanged.
 
-    // No inputs — the trigger/CV jack that used to live in qmod was pulled
-    // out so the header row can host two per-column mode buttons instead.
-    // Trigger-driven behaviour still lives on qmod+ (which keeps its own
-    // trigger input).
+struct QModPlusModule : Module {
+    static const int NUM_SLOTS = 14;
+    static const int NUM_ROWS  = 7;    // 2 slots per row (left/right column)
+
     enum InputIds {
+        IN_TRIG,
         NUM_INPUTS
     };
 
     enum OutputIds {
         ENUMS(MOD_OUTPUT, NUM_SLOTS),
         NUM_OUTPUTS
+    };
+
+    enum ParamIds {
+        ENUMS(RATE_KNOB, NUM_ROWS),
+        NUM_PARAMS
     };
 
     enum ModMode {
@@ -46,11 +56,21 @@ struct QModModule : Module {
         NUM_RANGES
     };
 
+    enum InputMode {
+        INPUT_TRIGGER = 0,
+        INPUT_GATE,
+        INPUT_CV_RATE,
+        INPUT_CV_SMOOTHNESS,
+        INPUT_CV_MODE,
+        NUM_INPUT_MODES
+    };
+
     // Split global mode — one per column. Each cycle button broadcasts into
     // only its half of slotMode[]. Per-slot arm clicks still override.
     int modeL = MODE_SMOOTH;
     int modeR = MODE_SMOOTH;
 
+    int inputMode = INPUT_TRIGGER;
     int lfoShape = LFO_SINE;
     float spreadRatio = 0.1f;
 
@@ -59,17 +79,20 @@ struct QModModule : Module {
     float attenuator[NUM_SLOTS];
     float offset[NUM_SLOTS];
 
-    bool rateSpread = true;
+    // qmod+ has no persistent "stagger" state. The row knobs are the single
+    // source of truth for per-row rate; `spreadRatio` just parameterises the
+    // one-shot "apply stagger" menu action that writes the log-spread
+    // multipliers into those knobs so the stagger literally shows in the
+    // knob positions.
     float globalRate = 4.5f;
     float smoothness = 0.4f;
 
-    // Array membership. When false, this module is a singleton — it will
-    // not join into a contiguous run of LC Q-devices, and neighbouring Q
-    // modules skip it when walking the array.
+    // Array membership. When false, this module is a singleton.
     bool inArray = true;
 
-    // Per-slot state for all generators. All live simultaneously so mode
-    // switches are glitch-free.
+    float rateOverride = -1.f;
+    float smoothnessOverride = -1.f;
+
     float phase[NUM_SLOTS];
     float shValue[NUM_SLOTS];
     float shCounter[NUM_SLOTS];
@@ -82,7 +105,9 @@ struct QModModule : Module {
     float slewState[NUM_SLOTS];
     float modLevel[NUM_SLOTS];
 
-    QModModule();
+    rack::dsp::SchmittTrigger trigInEdge;
+
+    QModPlusModule();
     void process(const ProcessArgs& args) override;
     json_t* dataToJson() override;
     void dataFromJson(json_t* rootJ) override;
@@ -90,12 +115,18 @@ struct QModModule : Module {
     // Per-column cycles and broadcasts. col: 0 = left (even slots), 1 = right.
     void cycleColumnMode(int col);
     void setColumnMode(int col, int newMode);
+    // Writes row-knob positions so the 7 row multipliers land on a log spread
+    // from 1× (row 0) → spreadRatio× (row 6). Call from the menu; knobs
+    // animate into their new positions and the user can hand-tweak from there.
+    void applyStaggerToKnobs();
+    void resetRowKnobs();
     void cycleSlotMode(int slot);
-    float frequencyHz(int slot);
+    void resyncAll();
+    float frequencyHz(int slot);             // non-const because it reads a Param
     float mapToVoltage(int slot, float v01) const;
 };
 
-struct QModWidget : ModuleWidget {
-    QModWidget(QModModule* module);
+struct QModPlusWidget : ModuleWidget {
+    QModPlusWidget(QModPlusModule* module);
     void appendContextMenu(Menu* menu) override;
 };

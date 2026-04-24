@@ -34,6 +34,11 @@ struct QMapModule : Module {
     // a qmod; the available one is used automatically.
     int qmodFavour = 0;
 
+    // Array membership. When false, this module is a singleton — won't
+    // join the contiguous Q-array containing it, and neighbouring Q
+    // modules skip it when walking.
+    bool inArray = true;
+
     // -1 when no slot is armed, otherwise the slot awaiting touch-assign.
     int armedSlot = -1;
     // True when the arming sweep was kicked off by the master q-map button —
