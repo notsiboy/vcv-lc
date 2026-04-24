@@ -1181,7 +1181,13 @@ void GrabPlusWidget::appendContextMenu(Menu* menu) {
             m->updateSubfolder();
         }));
     menu->addChild(createMenuItem("Reveal output folder", "", [m]() {
-        std::string d = m->grab.resolveOutputDir();
+        // Open the raw outputDir, not the per-type nested path — the
+        // grabs / recs / takes / dated subfolders should only appear
+        // after an actual recording lands.
+        std::string d = m->grab.outputDir;
+        if (d.empty()) d = asset::plugin(pluginInstance, "test");
+        else if (d[0] != '/' && !(d.size() > 1 && d[1] == ':'))
+            d = asset::plugin(pluginInstance, d);
         rack::system::createDirectories(d);
         rack::system::openDirectory(d);
     }));
