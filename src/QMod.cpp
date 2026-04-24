@@ -11,7 +11,10 @@
 
 // Module-scope clipboard for qmod. Copy captures dataToJson; paste applies
 // it via dataFromJson on the target qmod.
-static json_t* g_qmodClipboard = nullptr;
+// Legacy clipboard pointer kept as an alias to the shared qmod-family
+// clipboard in QArray so copy/paste can now move state between qmod and
+// qmod+ in either direction.
+#define g_qmodClipboard lc::qmodFamilyClipboard
 
 namespace {
 struct QModJsonAction : rack::history::ModuleAction {
@@ -558,10 +561,35 @@ struct ModeCycleButton : widget::OpaqueWidget {
 
     void onButton(const event::Button& e) override {
         OpaqueWidget::onButton(e);
-        if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
+        if (e.action != GLFW_PRESS || !qm) return;
+        if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
             json_t* before = qm->dataToJson();
             qm->cycleColumnMode(col);
             pushQModJsonAction(qm, before, col == 0 ? "qmod left mode" : "qmod right mode");
+            e.consume(this);
+        } else if (e.button == GLFW_MOUSE_BUTTON_RIGHT) {
+            // Right-click → mode picker popover. Same entries as the
+            // matching "Left/Right column mode" submenu in the module menu.
+            ui::Menu* menu = createMenu();
+            menu->addChild(createMenuLabel(col == 0 ? "Left column mode" : "Right column mode"));
+            auto addMode = [&](const char* label, int m) {
+                menu->addChild(createCheckMenuItem(label, "",
+                    [=]() {
+                        int cur = (col == 0) ? qm->modeL : qm->modeR;
+                        return cur == m;
+                    },
+                    [=]() {
+                        json_t* before = qm->dataToJson();
+                        qm->setColumnMode(col, m);
+                        pushQModJsonAction(qm, before, col == 0 ? "qmod left mode" : "qmod right mode");
+                    }));
+            };
+            addMode("Random triggers",  QModModule::MODE_RAND_TRIG);
+            addMode("Triggered S+H",    QModModule::MODE_TRIG_SH);
+            addMode("Smooth random",    QModModule::MODE_SMOOTH);
+            addMode("Sample & hold",    QModModule::MODE_SH);
+            addMode("LFO",              QModModule::MODE_LFO);
+            addMode("Random gates",     QModModule::MODE_RAND_GATE);
             e.consume(this);
         }
     }

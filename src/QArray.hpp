@@ -33,4 +33,10 @@ int indexInArray(rack::engine::Module* m);
 // index to get its global number. Returns 0 if `m` isn't in an array.
 int arraySlotBase(rack::engine::Module* m);
 
+// Shared copy/paste clipboard for the qmod family (qmod + qmod+). The
+// modules overlap on most state (modes, range, atten/offset, slotModes,
+// lfoShape, etc); unknown fields when pasting across types are silently
+// ignored by dataFromJson.
+extern json_t* qmodFamilyClipboard;
+
 } // namespace lc

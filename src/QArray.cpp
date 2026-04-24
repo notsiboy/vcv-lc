@@ -5,6 +5,8 @@
 
 namespace lc {
 
+json_t* qmodFamilyClipboard = nullptr;
+
 bool isQDevice(rack::engine::Module* m) {
     if (!m || !m->model) return false;
     return m->model == modelQMap

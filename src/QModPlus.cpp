@@ -11,7 +11,7 @@
 
 // Module-scope clipboard for qmod. Copy captures dataToJson; paste applies
 // it via dataFromJson on the target qmod.
-static json_t* g_qmodPlusClipboard = nullptr;
+#define g_qmodPlusClipboard lc::qmodFamilyClipboard
 
 namespace {
 struct QModPlusJsonAction : rack::history::ModuleAction {
@@ -652,10 +652,33 @@ struct ModeCycleButton : widget::OpaqueWidget {
 
     void onButton(const event::Button& e) override {
         OpaqueWidget::onButton(e);
-        if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
+        if (e.action != GLFW_PRESS || !qm) return;
+        if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
             json_t* before = qm->dataToJson();
             qm->cycleColumnMode(col);
             pushQModPlusJsonAction(qm, before, col == 0 ? "qmod+ left mode" : "qmod+ right mode");
+            e.consume(this);
+        } else if (e.button == GLFW_MOUSE_BUTTON_RIGHT) {
+            ui::Menu* menu = createMenu();
+            menu->addChild(createMenuLabel(col == 0 ? "Left column mode" : "Right column mode"));
+            auto addMode = [&](const char* label, int m) {
+                menu->addChild(createCheckMenuItem(label, "",
+                    [=]() {
+                        int cur = (col == 0) ? qm->modeL : qm->modeR;
+                        return cur == m;
+                    },
+                    [=]() {
+                        json_t* before = qm->dataToJson();
+                        qm->setColumnMode(col, m);
+                        pushQModPlusJsonAction(qm, before, col == 0 ? "qmod+ left mode" : "qmod+ right mode");
+                    }));
+            };
+            addMode("Random triggers",        QModPlusModule::MODE_RAND_TRIG);
+            addMode("Triggered S+H (ext)",    QModPlusModule::MODE_TRIG_SH);
+            addMode("Smooth random",          QModPlusModule::MODE_SMOOTH);
+            addMode("Sample & hold",          QModPlusModule::MODE_SH);
+            addMode("LFO",                    QModPlusModule::MODE_LFO);
+            addMode("Random gates",           QModPlusModule::MODE_RAND_GATE);
             e.consume(this);
         }
     }

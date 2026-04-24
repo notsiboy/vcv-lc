@@ -551,7 +551,9 @@ QMapWidget::QMapWidget(QMapModule* module) {
         MasterArmButton* b = new MasterArmButton;
         b->qm = module;
         b->box.size = mm2px(Vec(5.f, 5.f));
-        b->box.pos = Vec((box.size.x - b->box.size.x) / 2.f, mm2px(14.f));
+        // Centred at y = 14.5 mm to line up with qmod's header buttons.
+        b->box.pos = Vec((box.size.x - b->box.size.x) / 2.f,
+                         mm2px(14.5f) - b->box.size.y / 2.f);
         addChild(b);
     }
 
@@ -690,32 +692,39 @@ void QMapWidget::appendContextMenu(Menu* menu) {
         },
         /*disabled*/ g_qmapClipboard == nullptr));
 
-    // Adjacency status — shows whether a qmod is currently detected on
-    // either side. Checked at menu-open time. When flanked on both sides,
-    // exposes a radio picker so the user can favour one.
+    // Array status — count the qmaps and mod sources participating in this
+    // Q-array so the user can see at a glance whether slot pairings exist.
     menu->addChild(new MenuSeparator);
-    bool linkedLeft = qm->leftExpander.module
-                      && qm->leftExpander.module->model == modelQMod;
-    bool linkedRight = qm->rightExpander.module
-                       && qm->rightExpander.module->model == modelQMod;
-    if (linkedLeft && linkedRight) {
-        const char* favourName = (qm->qmodFavour == 1) ? "right" : "left";
+    auto arr = lc::walkArray(qm);
+    int qmapCount = 0, modCount = 0;
+    for (auto* m : arr) {
+        if (!m) continue;
+        if (m->model == modelQMap) qmapCount++;
+        else if (m->model == modelQMod || m->model == modelQModPlus) modCount++;
+    }
+    if (modCount == 0) {
         menu->addChild(createMenuLabel(
-            string::f("qmods on both sides — favouring %s", favourName)));
-        menu->addChild(createCheckMenuItem("Favour left qmod", "",
-            [=]() { return qm->qmodFavour == 0; },
-            [=]() { qm->qmodFavour = 0; }));
-        menu->addChild(createCheckMenuItem("Favour right qmod", "",
-            [=]() { return qm->qmodFavour == 1; },
-            [=]() { qm->qmodFavour = 1; }));
-    } else if (linkedLeft || linkedRight) {
-        std::string side = linkedLeft ? "left" : "right";
-        menu->addChild(createMenuLabel(
-            string::f("qmod linked on the %s — unconnected aux inputs auto-feed from it",
-                      side.c_str())));
+            "No qmod in array — place a qmod / qmod+ next to any qmap here to auto-feed its inputs"));
     } else {
+        int qmapBase = lc::arraySlotBase(qm);
+        int paired = 0;
+        for (int i = 0; i < QMapModule::NUM_SLOTS; i++) {
+            int globalIdx = qmapBase + i;
+            for (auto* m : arr) {
+                if (!m || m == qm) continue;
+                if (m->model != modelQMod && m->model != modelQModPlus) continue;
+                int modBase = lc::arraySlotBase(m);
+                if (globalIdx >= modBase && globalIdx < modBase + QMapModule::NUM_SLOTS) {
+                    paired++;
+                    break;
+                }
+            }
+        }
         menu->addChild(createMenuLabel(
-            "No qmod adjacent — place one next to this module to auto-feed unconnected inputs"));
+            string::f("Array: %d qmap%s + %d mod source%s — %d of this module's slots paired",
+                      qmapCount, qmapCount == 1 ? "" : "s",
+                      modCount,  modCount == 1 ? "" : "s",
+                      paired)));
     }
 
     menu->addChild(new MenuSeparator);
