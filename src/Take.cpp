@@ -719,4 +719,3 @@ void TakeWidget::appendContextMenu(Menu* menu) {
     lc::appendThemeMenu(menu);
 }
 
-Model* modelTake = createModel<TakeModule, TakeWidget>("take");

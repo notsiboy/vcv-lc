@@ -32,24 +32,6 @@
       ]
     },
     {
-      "slug": "grab",
-      "name": "grab",
-      "description": "Auto-triggered one-shot recorder. Records until silent, writes WAV with optional fades and normalise.",
-      "tags": [
-        "Recording",
-        "Utility"
-      ]
-    },
-    {
-      "slug": "take",
-      "name": "take",
-      "description": "Session-aware recorder. Rolls a continuous buffer of the last N seconds; click save to capture retroactively. Voice-memos style vertical waveform.",
-      "tags": [
-        "Recording",
-        "Utility"
-      ]
-    },
-    {
       "slug": "capture",
       "name": "capture",
       "description": "Export PNG snapshots and copy rack inventory (plugins, versions, module counts) for sharing.",
@@ -59,8 +41,8 @@
       ]
     },
     {
-      "slug": "grab2",
-      "name": "grab 2",
+      "slug": "grabplus",
+      "name": "grab+",
       "description": "Smart recorder. Auto-triggered one-shot (grab), retrospective rolling buffer (take), silence-gated ring (snip), plus a big rec button — short click to force-record, long click to save take.",
       "tags": [
         "Recording",

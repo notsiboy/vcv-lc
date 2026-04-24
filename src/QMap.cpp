@@ -587,7 +587,7 @@ QMapWidget::QMapWidget(QMapModule* module) {
         addChild(b);
     }
 
-    // 7 rows × 2 columns. Bottom row anchors to grab2's L/R jack positions
+    // 7 rows × 2 columns. Bottom row anchors to grab+'s L/R jack positions
     // (jack centre y = 106mm, columns at 25% / 75% of panel width); six rows
     // above follow at a tight 13mm step to fit all 14 slots between the
     // master button and the logo. Arm buttons sit 6.5mm above each jack —

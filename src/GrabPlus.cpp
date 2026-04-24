@@ -1,4 +1,4 @@
-#include "Grab2.hpp"
+#include "GrabPlus.hpp"
 #include "Theme.hpp"
 #include "plugin.hpp"
 #include "LcPorts.hpp"
@@ -12,13 +12,13 @@
 
 // ─── Module ─────────────────────────────────────────────────────────────────
 
-Grab2Module::Grab2Module() {
+GrabPlusModule::GrabPlusModule() {
     config(0, NUM_INPUTS, 0, 0);
     configInput(IN_L, "Left");
     configInput(IN_R, "Right");
 }
 
-void Grab2Module::onSampleRateChange(const SampleRateChangeEvent& e) {
+void GrabPlusModule::onSampleRateChange(const SampleRateChangeEvent& e) {
     grab.onSampleRateChange(e);
     take.onSampleRateChange(e);
 }
@@ -30,7 +30,7 @@ void Grab2Module::onSampleRateChange(const SampleRateChangeEvent& e) {
 // nothing. The inner ports never see a cable so they'd stay disconnected,
 // and grab/take's `isConnected()` guards would return false, starving their
 // DSP of audio.
-void Grab2Module::process(const ProcessArgs& args) {
+void GrabPlusModule::process(const ProcessArgs& args) {
     int lCh = inputs[IN_L].getChannels();
     int rCh = inputs[IN_R].getChannels();
 
@@ -60,7 +60,7 @@ void Grab2Module::process(const ProcessArgs& args) {
     take.process(args);
 }
 
-json_t* Grab2Module::dataToJson() {
+json_t* GrabPlusModule::dataToJson() {
     json_t* r = json_object();
     json_object_set_new(r, "grab", grab.dataToJson());
     json_object_set_new(r, "take", take.dataToJson());
@@ -68,7 +68,7 @@ json_t* Grab2Module::dataToJson() {
     return r;
 }
 
-void Grab2Module::dataFromJson(json_t* root) {
+void GrabPlusModule::dataFromJson(json_t* root) {
     if (json_t* g = json_object_get(root, "grab")) grab.dataFromJson(g);
     if (json_t* t = json_object_get(root, "take")) take.dataFromJson(t);
     if (json_t* j = json_object_get(root, "useDatedSubfolder"))
@@ -76,7 +76,7 @@ void Grab2Module::dataFromJson(json_t* root) {
     updateSubfolder();
 }
 
-std::string Grab2Module::datedSubfolderName() {
+std::string GrabPlusModule::datedSubfolderName() {
     std::string patchName = "untitled";
     if (APP && APP->patch) {
         std::string path = APP->patch->path;
@@ -95,7 +95,7 @@ std::string Grab2Module::datedSubfolderName() {
     return patchName + "_" + datebuf;
 }
 
-void Grab2Module::updateSubfolder() {
+void GrabPlusModule::updateSubfolder() {
     std::string name = useDatedSubfolder ? datedSubfolderName() : std::string();
     grab.subfolder = name;
     take.subfolder = name;
@@ -109,7 +109,7 @@ void Grab2Module::updateSubfolder() {
 
 namespace {
 
-struct Grab2Background : widget::Widget {
+struct GrabPlusBackground : widget::Widget {
     void draw(const DrawArgs& args) override {
                 nvgBeginPath(args.vg);
         nvgRect(args.vg, 0, 0, box.size.x, box.size.y);
@@ -118,7 +118,7 @@ struct Grab2Background : widget::Widget {
     }
 };
 
-struct Grab2Logo : widget::Widget {
+struct GrabPlusLogo : widget::Widget {
     std::string path, darkPath, greyPath;
     void draw(const DrawArgs& args) override {
                 std::string use = lc::logoAsset(path, darkPath, greyPath);
@@ -132,7 +132,7 @@ struct Grab2Logo : widget::Widget {
     }
 };
 
-struct Grab2Label : widget::Widget {
+struct GrabPlusLabel : widget::Widget {
     std::string text;
     float fontSize = 7.f;
     void draw(const DrawArgs& args) override {
@@ -681,7 +681,7 @@ struct WaveformStrip : widget::Widget {
 
 // ─── Widget layout ──────────────────────────────────────────────────────────
 
-Grab2Widget::Grab2Widget(Grab2Module* module) {
+GrabPlusWidget::GrabPlusWidget(GrabPlusModule* module) {
     setModule(module);
     const int HP = 4;
     box.size = math::Vec(RACK_GRID_WIDTH * HP, RACK_GRID_HEIGHT);
@@ -693,7 +693,7 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
     GrabModule* gmPtr = module ? &module->grab : nullptr;
     TakeModule* tmPtr = module ? &module->take : nullptr;
 
-    Grab2Background* bg = new Grab2Background;
+    GrabPlusBackground* bg = new GrabPlusBackground;
     bg->box.size = box.size;
     addChild(bg);
 
@@ -708,8 +708,8 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
 
     // Title
     {
-        Grab2Label* l = new Grab2Label;
-        l->text = "grab 2";
+        GrabPlusLabel* l = new GrabPlusLabel;
+        l->text = "grab+";
         l->box.size = math::Vec(box.size.x, mm2px(3.f));
         l->box.pos  = math::Vec(0, mm2px(7.f));
         addChild(l);
@@ -787,7 +787,7 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
         addChild(b);
     }
     auto placeLabeledJack = [&](const std::string& txt, float cx, int portId) {
-        Grab2Label* l = new Grab2Label;
+        GrabPlusLabel* l = new GrabPlusLabel;
         l->text = txt;
         l->fontSize = 9.f;
         l->box.size = math::Vec(mm2px(8.f), mm2px(3.5f));
@@ -796,12 +796,12 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
         addInput(createInputCentered<lc::WhiteRingPJ301MPort>(
             mm2px(math::Vec(cx, jackY + 4.f)), module, portId));
     };
-    placeLabeledJack("L", colL, Grab2Module::IN_L);
-    placeLabeledJack("R", colR, Grab2Module::IN_R);
+    placeLabeledJack("L", colL, GrabPlusModule::IN_L);
+    placeLabeledJack("R", colR, GrabPlusModule::IN_R);
 
     // Logo at bottom
     {
-        Grab2Logo* lg = new Grab2Logo;
+        GrabPlusLogo* lg = new GrabPlusLogo;
         lg->path     = asset::plugin(pluginInstance, "res/lc-icon-new.png");
         lg->darkPath = asset::plugin(pluginInstance, "res/lc-icon-white.png");
 
@@ -813,9 +813,9 @@ Grab2Widget::Grab2Widget(Grab2Module* module) {
     }
 }
 
-void Grab2Widget::step() {
+void GrabPlusWidget::step() {
     ModuleWidget::step();
-    Grab2Module* m = dynamic_cast<Grab2Module*>(module);
+    GrabPlusModule* m = dynamic_cast<GrabPlusModule*>(module);
     if (!m) return;
     if (m->grab.spareNeedsRealloc.exchange(false, std::memory_order_relaxed)) {
         m->grab.spareBuf = std::vector<float>();
@@ -904,7 +904,7 @@ struct TakePrefixField : ui::TextField {
 // One folder for both — they write files with different prefixes so having
 // them share a destination is the ergonomic default.
 struct SharedDirField : ui::TextField {
-    Grab2Module* m = nullptr;
+    GrabPlusModule* m = nullptr;
     SharedDirField() { box.size.x = 200.f; }
     void onChange(const event::Change& e) override {
         ui::TextField::onChange(e);
@@ -945,7 +945,7 @@ struct TakeBitDepthMenu : MenuItem {
 // Submenus keep the top-level context menu short; dive in for mode-specific
 // knobs.
 struct GrabSettingsMenu : MenuItem {
-    Grab2Module* m;
+    GrabPlusModule* m;
     Menu* createChildMenu() override {
         GrabModule* gm = &m->grab;
         Menu* menu = new Menu;
@@ -982,7 +982,7 @@ struct GrabSettingsMenu : MenuItem {
 };
 
 struct SnipSettingsMenu : MenuItem {
-    Grab2Module* m;
+    GrabPlusModule* m;
     Menu* createChildMenu() override {
         TakeModule* tm = &m->take;
         Menu* menu = new Menu;
@@ -995,7 +995,7 @@ struct SnipSettingsMenu : MenuItem {
 };
 
 struct TakeSettingsMenu : MenuItem {
-    Grab2Module* m;
+    GrabPlusModule* m;
     Menu* createChildMenu() override {
         TakeModule* tm = &m->take;
         Menu* menu = new Menu;
@@ -1027,8 +1027,8 @@ struct TakeSettingsMenu : MenuItem {
 
 } // namespace
 
-void Grab2Widget::appendContextMenu(Menu* menu) {
-    Grab2Module* m = dynamic_cast<Grab2Module*>(module);
+void GrabPlusWidget::appendContextMenu(Menu* menu) {
+    GrabPlusModule* m = dynamic_cast<GrabPlusModule*>(module);
     if (!m) return;
 
     menu->addChild(new MenuSeparator);
@@ -1042,7 +1042,7 @@ void Grab2Widget::appendContextMenu(Menu* menu) {
         curMode == GrabModule::MODE_SNIP ? "snip" : "off";
 
     struct ModeItem : MenuItem {
-        Grab2Module* m;
+        GrabPlusModule* m;
         int v;
         void onAction(const event::Action& e) override {
             if (m) m->grab.mode.store(v, std::memory_order_relaxed);
@@ -1117,4 +1117,4 @@ void Grab2Widget::appendContextMenu(Menu* menu) {
     lc::appendThemeMenu(menu);
 }
 
-Model* modelGrab2 = createModel<Grab2Module, Grab2Widget>("grab2");
+Model* modelGrabPlus = createModel<GrabPlusModule, GrabPlusWidget>("grabplus");

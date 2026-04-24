@@ -1,6 +1,6 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
-// grab 2 — combined recorder. Embeds a GrabModule + TakeModule as members so
+// grab+ — combined recorder. Embeds a GrabModule + TakeModule as members so
 // both DSP paths run off one shared stereo input pair. Adds the universal
 // mode cycle (off / grab / snip), a big dual-action rec button (short click =
 // force-rec toggle, long click = save take), a "save to dated subfolder"
@@ -17,7 +17,7 @@
 
 using namespace rack;
 
-struct Grab2Module : Module {
+struct GrabPlusModule : Module {
     enum InputId { IN_L, IN_R, NUM_INPUTS };
 
     GrabModule grab;
@@ -28,7 +28,7 @@ struct Grab2Module : Module {
     // date whenever this flag is re-applied.
     bool useDatedSubfolder = false;
 
-    Grab2Module();
+    GrabPlusModule();
     void process(const ProcessArgs& args) override;
     void onSampleRateChange(const SampleRateChangeEvent& e) override;
 
@@ -40,8 +40,8 @@ struct Grab2Module : Module {
     static std::string datedSubfolderName();
 };
 
-struct Grab2Widget : ModuleWidget {
-    Grab2Widget(Grab2Module* module);
+struct GrabPlusWidget : ModuleWidget {
+    GrabPlusWidget(GrabPlusModule* module);
     void step() override;
     void appendContextMenu(Menu* menu) override;
 };

@@ -747,4 +747,3 @@ void GrabWidget::step() {
     }
 }
 
-Model* modelGrab = createModel<GrabModule, GrabWidget>("grab");

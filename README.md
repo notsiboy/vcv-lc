@@ -4,11 +4,11 @@ Quality-of-life modules for VCV Rack 2. Minimal panels, thoughtful defaults, and
 
 ## Modules
 
-### grab 2
+### grab+
 
-![grab 2 module](docs/grab2.png)
+![grab+ module](docs/grab2.png)
 
-One recorder, every mode. Builds on `grab` (auto-triggered one-shot) and `take` (rolling retrospective buffer), stitches them into a single 4 HP panel, and adds a few tricks neither has alone. Both DSP paths run off one shared stereo input pair.
+One recorder, every mode. Combines auto-triggered one-shot capture, a retrospective rolling buffer, and a silence-gated ring, all off one shared stereo input pair on a single 4 HP panel.
 
 **Mode cycle** — the top LED cycles three modes. Click acts on a 2-second delay, softly flashing the pending colour, so an accidental click can't trip a one-shot mid-jam; cycle further during the countdown or wait for the commit.
 
@@ -21,15 +21,15 @@ One recorder, every mode. Builds on `grab` (auto-triggered one-shot) and `take` 
 - Long click (≥ 450 ms) → saves a take from the rolling buffer. Amber flash on fire, plus a hold-progress amber ramp so you know when it's about to trigger
 - Outer ring goes red in sync with the LED core
 
-**Peak meters + waveform** — L peak column on the left, take's vertical voice-memos waveform in the middle, R peak column on the right. A mono source lights both peak columns (signal mirrors into both sides) so it's visually clear you can record with just one cable patched.
+**Peak meters + waveform** — L peak column on the left, a vertical voice-memos waveform in the middle, R peak column on the right. A mono source lights both peak columns (signal mirrors into both sides) so it's visually clear you can record with just one cable patched.
 
 **Other conveniences**
 - **Save to sub folder** — one-click toggle that routes saves into `<outputDir>/<patch>_<dd>_<mm>_<yyyy>/`. Flipped off-on later gets a fresh date
-- Separate filename prefixes for grab (`grab_NN.wav`) and take (`take_NN.wav`), shared output dir
+- Separate filename prefixes for one-shots (`grab_NN.wav`) and takes (`take_NN.wav`), shared output dir
 - Mono recording: if only L (or only R) is patched, the file is written as a true mono WAV — not a stereo WAV with duplicate channels
-- All of grab + take + snip settings (threshold, hangover, pre-roll, fade in/out, bit depth, normalise, buffer length, silence threshold…) available in the right-click menu
+- All grab / take / snip settings (threshold, hangover, pre-roll, fade in/out, bit depth, normalise, buffer length, silence threshold…) available in the right-click menu
 
-4 HP. Both standalone `grab` and `take` modules remain available — `grab 2` is the unified flagship.
+4 HP.
 
 ### journal
 
@@ -65,33 +65,6 @@ Selectively hide or fade individual modules and cables without touching global c
 - Per-cable-colour opacity so you can fade entire colour classes
 - Preset slots that capture the current rule set
 - Dark-mode overlay for "force this module to look dark"
-
-### grab
-
-![grab module](docs/grab.png)
-
-Auto-triggered one-shot recorder. Listens for signal, captures the take, writes WAV. No arming cables, no gate inputs — it just records when audio's coming in.
-
-- Stereo L/R inputs; captures mono if only one is connected
-- Arm button on panel; records only when armed
-- Threshold + hangover + pre-roll so attacks aren't clipped and small gaps don't end a take
-- Min-take filter suppresses spurious click-triggered micro-files
-- Right-click menu: threshold (dB), hangover (ms), pre-roll (ms), fade in/out (ms), max take length (s), normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory, reveal folder
-- Filenames auto-increment: `<prefix><NN>.wav`
-- Written asynchronously on a background thread so the audio thread never touches disk
-
-### take
-
-![take module](docs/take.png)
-
-Session-aware retrospective recorder. Pairs with `grab` as its opposite — `grab` starts recording when audio arrives; `take` is always quietly rolling a ring buffer of the last N seconds, so you can capture something *after* the fact. Solves the "that thing I played 30 seconds ago was perfect" problem.
-
-- Stereo continuous ring buffer, 60 s default (adjustable 10–300 s in right-click)
-- One panel button — click to freeze the last N seconds to WAV
-- Voice-memos style vertical waveform on the panel: newest audio at the top, scrolls down, centred silhouette of the stereo peak
-- Auto-named `<prefix><NN>.wav` files, asynchronous writer thread so the audio path never touches disk
-- Right-click: buffer length, fade in/out, normalise to 0 dB, bit depth (16 / 24 / 32-bit float), filename prefix, output directory + picker, reveal folder
-- 4 HP
 
 ## The Q-family
 
