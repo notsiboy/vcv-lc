@@ -819,8 +819,8 @@ GrabPlusWidget::GrabPlusWidget(GrabPlusModule* module) {
     const float visY = 22.f;
     const float visH = 58.f;
     const float meterW = 2.f;
-    const float waveW  = 8.f;
-    const float meterInsetMM = 4.f;   // distance from panel edge to meter centre
+    const float waveW  = 10.f;
+    const float meterInsetMM = 3.f;   // distance from panel edge to meter centre
     {
         PeakMeter* m = new PeakMeter;
         m->gm = gmPtr;
