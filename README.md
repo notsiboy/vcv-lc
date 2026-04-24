@@ -109,36 +109,34 @@ Session-aware retrospective recorder. Pairs with `grab` as its opposite — `gra
 
 4 HP, laid out as 7 rows × 2 columns of jacks with arm buttons tucked above each.
 
-### qmod
+### qmod+ *(beta)*
 
-![qmod module](docs/qmod.png)
+![qmod+ module](docs/qmod.png)
 
-14-channel modulation source with the same layout as qmap — drop them side-by-side and every qmod output lines up with the matching qmap aux input.
+4 HP 14-slot modulation source. Two per-column mode cycle buttons let the left and right columns run different modes independently; every LED tracks its own slot's mode colour and breathes with its output CV.
 
-**Modes** — the master button at the top cycles five modes, each with its own LED colour. Picking a mode broadcasts it to every slot; per-slot LED buttons can be clicked to diverge so any mix of modes can run on the same bank.
+**Modes** — five choices per column, cycled from the top-row button:
 
-- **Random triggers** (red) — stochastic trigger bursts, each slot fires at its own rate with ±50% jitter
-- **Triggered S+H** (orange) — no internal clock; every trigger input rising edge resamples every slot, VCV Random-style
+- **Random triggers** (red) — stochastic trigger bursts per slot with ±50% jitter
+- **Triggered S+H** (orange) — held value, resampled when an array-mate qmod fires
 - **Smooth random** (cyan, default) — smootherstep-slewed random-target wander
-- **Sample & hold** (purple) — classic free-running S+H at each slot's rate
-- **LFO** (green) — selectable sine / triangle / square / saw
+- **Sample & hold** (purple) — free-running S+H at each slot's rate
+- **LFO** (green) — selectable sine / triangle / square / saw in the menu
 
-**Stagger** — Ochd-style log-spread of rates from slot 1 (fastest) to slot 14 (slowest). Toggle on/off, and dial the **Stagger spread** slider to tighten or stretch the slow-end multiplier. Turn stagger off and every slot runs at the global rate.
+**Global controls** in the right-click menu: Global rate (0.01–10 Hz), Smoothness (doubles as a slew limiter on step-shaped modes), Stagger toggle + Spread slider (Ochd-style log spread from slot 1 to slot 14).
 
-**Global controls** (inline in the right-click menu)
-- **Global rate** — 0.01–10 Hz base speed
-- **Smoothness** — double duty: shapes the random-target slew in smooth-random mode, and acts as a one-pole output slew limiter on S+H / triggered S+H / LFO so step changes glide. Random triggers bypass it so pulses stay crisp.
+**Per-jack right-click** — unipolar / bipolar range, Attenuator (±2×) and Offset (±10 V) for post-range conditioning.
 
-**Trigger / CV input** — single jack at the top; the right-click menu picks how it's read:
-- **Trigger / resync** — rising edge resets phases, resamples S+H slots, fires random triggers
-- **Gate (run/freeze)** — high = run, low = freeze and hold every output voltage
-- **CV → rate / smoothness / mode** — accepts unipolar or bipolar (±5V) signals; while the cable drives the value, your menu-set base is preserved and restored the moment you unplug
+Lives in a Q-array with neighbouring qmap / qmod modules. Array feed, copy/paste, undo, atten/offset, LFO shape, per-slot mode overrides, all persist in JSON. Per-slot LED brightness tracks each output's CV.
 
-**Per-jack right-click** — output range (unipolar 0..10V / 0..5V / 0..1V, bipolar ±10V / ±5V / ±1V), plus **Attenuator** (±2×) and **Offset** (±10V) for post-range conditioning.
+### qmod *(beta)*
 
-**Other**: per-slot LED brightness tracks each output's CV (triggers flash and decay), **Copy/Paste settings** to clone a whole qmod to another, undo on mode cycles and paste, and a live status line showing whether a qmap is adjacent and which side is auto-feeding. Per-slot state persists in JSON.
+Same 14-slot mod source as qmod+, but in **6 HP** with a per-row **log-scaled rate knob strip** on the right. Drop a log-spread into the knobs with one **Apply stagger** menu action, then hand-tune any row. The row knobs govern rate multipliers across the whole Q-array — drop a qmod into an array of qmod+s and it dictates their per-row rates too.
 
-4 HP. 14 outputs in 7×2 columns, title + master button + trigger input up top.
+- Left 4 HP mirrors qmod+'s layout exactly (same column centres, same pitch) so modules line up row-for-row.
+- Right 2 HP strip: one Trimpot per row, log-scaled (±1 decade around 1×), plus a white-ring trigger input up top.
+- Trigger / CV input modes (in the menu): Trigger / resync, Gate (run/freeze), CV → rate / smoothness / mode.
+- Otherwise inherits every qmod+ feature: per-column modes, LFO shape, atten/offset, range, copy/paste, undo, adjacency-aware array behaviour.
 
 ### flow *(beta)*
 

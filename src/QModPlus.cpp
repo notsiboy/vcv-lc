@@ -744,7 +744,7 @@ QModPlusWidget::QModPlusWidget(QModPlusModule* module) {
     // clearly visible.
     {
         QModPlusLabel* lab = new QModPlusLabel;
-        lab->text = "qmod+";
+        lab->text = "qmod";
         lab->fontSize = 7.f;
         lab->box.size = Vec(box.size.x, mm2px(3.f));
         lab->box.pos = Vec(0, mm2px(7.f));
@@ -1022,4 +1022,7 @@ void QModPlusWidget::appendContextMenu(Menu* menu) {
     lc::appendThemeMenu(menu);
 }
 
-Model* modelQModPlus = createModel<QModPlusModule, QModPlusWidget>("qmodplus");
+// Slug "qmod" — this is the user-facing "qmod" module (6 HP, with row knobs).
+// The C++ class names stay QModPlusModule / QModPlusWidget for historical
+// reasons; the slug is what users see and what patches reference.
+Model* modelQModPlus = createModel<QModPlusModule, QModPlusWidget>("qmod");

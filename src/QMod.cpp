@@ -635,7 +635,7 @@ QModWidget::QModWidget(QModModule* module) {
     // has space to sit at the full PJ301M height without colliding.
     {
         QModLabel* lab = new QModLabel;
-        lab->text = "qmod";
+        lab->text = "qmod+";
         lab->fontSize = 7.f;
         lab->box.size = Vec(box.size.x, mm2px(3.f));
         lab->box.pos = Vec(0, mm2px(7.f));
@@ -866,4 +866,7 @@ void QModWidget::appendContextMenu(Menu* menu) {
     lc::appendThemeMenu(menu);
 }
 
-Model* modelQMod = createModel<QModModule, QModWidget>("qmod");
+// Slug "qmodplus" — this is the user-facing "qmod+" module (4 HP, no row knobs).
+// The C++ class names stay QModModule / QModWidget for historical reasons;
+// the slug is what users see and what patches reference.
+Model* modelQMod = createModel<QModModule, QModWidget>("qmodplus");

@@ -77,9 +77,9 @@
       ]
     },
     {
-      "slug": "qmod",
-      "name": "qmod",
-      "description": "Fourteen mod-source outputs (LFO / S+H / smooth random) spread slow-to-fast à la Ochd. When placed next to a qmap, each output auto-feeds the matching aux input.",
+      "slug": "qmodplus",
+      "name": "qmod+ (beta)",
+      "description": "4 HP 14-slot modulation source with per-column mode cycle buttons. Five modes (random triggers, triggered S+H, smooth random, S+H, LFO) selectable per column; each slot can diverge. Joins a Q-array with neighbouring qmap / qmod modules.",
       "tags": [
         "LFO",
         "Random",
@@ -87,9 +87,9 @@
       ]
     },
     {
-      "slug": "qmodplus",
-      "name": "qmod+ (beta)",
-      "description": "qmod with extras: separate mode cycle per column, trigger input relocated to a dedicated strip, and a per-row log-scaled rate multiplier knob for on-panel tuning. 6 HP.",
+      "slug": "qmod",
+      "name": "qmod (beta)",
+      "description": "6 HP 14-slot modulation source. Per-column mode cycle buttons + a per-row log-scaled rate knob strip so every pair of slots can be hand-tuned relative to the base rate. Apply-stagger menu action writes a log-spread into the row knobs. Joins a Q-array with neighbouring qmap / qmod+ modules.",
       "tags": [
         "LFO",
         "Random",
