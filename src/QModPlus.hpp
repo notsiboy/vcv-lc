@@ -35,6 +35,7 @@ struct QModPlusModule : Module {
         MODE_SMOOTH,
         MODE_SH,
         MODE_LFO,
+        MODE_RAND_GATE,
         NUM_MODES
     };
 
@@ -85,7 +86,10 @@ struct QModPlusModule : Module {
     // multipliers into those knobs so the stagger literally shows in the
     // knob positions.
     float globalRate = 4.5f;
-    float smoothness = 0.4f;
+    // Default is 0 — smooth random always has its own full smootherstep
+    // regardless of this value; smoothness only affects the post-process
+    // slew on LFO / S+H / triggered S+H.
+    float smoothness = 0.f;
 
     // Array membership. When false, this module is a singleton.
     bool inArray = true;
@@ -102,6 +106,7 @@ struct QModPlusModule : Module {
     float smoothPeriod[NUM_SLOTS];
     float trigCounter[NUM_SLOTS];
     rack::dsp::PulseGenerator trigPulse[NUM_SLOTS];
+    bool gateState[NUM_SLOTS];
     float slewState[NUM_SLOTS];
     float modLevel[NUM_SLOTS];
 

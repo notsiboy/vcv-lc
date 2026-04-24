@@ -25,6 +25,7 @@ struct QModModule : Module {
         MODE_SMOOTH,
         MODE_SH,
         MODE_LFO,
+        MODE_RAND_GATE,
         NUM_MODES
     };
 
@@ -61,7 +62,9 @@ struct QModModule : Module {
 
     bool rateSpread = true;
     float globalRate = 4.5f;
-    float smoothness = 0.4f;
+    // Default is 0 — no extra slew on step-shaped modes; smooth random
+    // always has its own baked-in smootherstep regardless of this value.
+    float smoothness = 0.f;
 
     // Array membership. When false, this module is a singleton — it will
     // not join into a contiguous run of LC Q-devices, and neighbouring Q
@@ -79,6 +82,8 @@ struct QModModule : Module {
     float smoothPeriod[NUM_SLOTS];
     float trigCounter[NUM_SLOTS];
     rack::dsp::PulseGenerator trigPulse[NUM_SLOTS];
+    // Random-gate state: on/off per slot, flipped when its counter runs out.
+    bool gateState[NUM_SLOTS];
     float slewState[NUM_SLOTS];
     float modLevel[NUM_SLOTS];
 
@@ -91,6 +96,10 @@ struct QModModule : Module {
     void cycleColumnMode(int col);
     void setColumnMode(int col, int newMode);
     void cycleSlotMode(int slot);
+    // Invoked from a neighbouring qmod+'s trigger input when their arrays
+    // are joined — resets phases / samples / gate states as appropriate
+    // per slot's mode.
+    void resyncAll();
     float frequencyHz(int slot);
     float mapToVoltage(int slot, float v01) const;
 };

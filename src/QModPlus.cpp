@@ -1,4 +1,5 @@
 #include "QModPlus.hpp"
+#include "QMod.hpp"
 #include "QArray.hpp"
 #include "Theme.hpp"
 #include "LcPorts.hpp"
@@ -47,9 +48,10 @@ QModPlusModule::QModPlusModule() {
     config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, 0);
     configInput(IN_TRIG, "Trigger / resync");
     // Per-row rate multiplier knob. Log-scaled via displayBase so the knob's
-    // centre position reads as 1× (no change), left as 0.1× and right as 10×.
+    // centre position reads as 1× (no change); full left is 0.01× and full
+    // right is 100× (±2 decades).
     for (int r = 0; r < NUM_ROWS; r++) {
-        configParam(RATE_KNOB + r, -1.f, 1.f, 0.f,
+        configParam(RATE_KNOB + r, -2.f, 2.f, 0.f,
                     string::f("Row %d rate", r + 1), "×", 10.f, 1.f);
     }
     for (int i = 0; i < NUM_SLOTS; i++) {
@@ -66,6 +68,7 @@ QModPlusModule::QModPlusModule() {
         smoothCounter[i] = 0.f;
         smoothPeriod[i] = 1.f;
         trigCounter[i] = 0.f;
+        gateState[i] = (random::uniform() < 0.5f);
         slewState[i] = 0.5f;
         modLevel[i] = 0.f;
         configOutput(MOD_OUTPUT + i, string::f("Mod %d", i + 1));
@@ -110,6 +113,9 @@ void QModPlusModule::resyncAll() {
             case MODE_RAND_TRIG:
                 trigCounter[i] = 0.f;    // fire next tick
                 break;
+            case MODE_RAND_GATE:
+                trigCounter[i] = 0.f;    // flip gate at next step
+                break;
             case MODE_TRIG_SH:
                 // Triggered S+H has no internal clock — the trigger input IS
                 // the clock. Sample a fresh value right now.
@@ -142,11 +148,12 @@ void QModPlusModule::applyStaggerToKnobs() {
     // Write log-spread multipliers into the row knobs. Row 0 lands on 1×
     // (knob value 0), row NUM_ROWS-1 lands on spreadRatio× (knob value
     // log10(spreadRatio)). Intermediate rows interpolate log-linearly.
+    // Knobs now have a ±2 decade range, so the clamp matches.
     float r = math::clamp(spreadRatio, 1e-4f, 1.f);
-    float lo = std::log10(r);   // e.g. -1 for spreadRatio = 0.1
+    float lo = std::log10(r);
     for (int row = 0; row < NUM_ROWS; row++) {
         float t = (NUM_ROWS > 1) ? (float)row / (float)(NUM_ROWS - 1) : 0.f;
-        float knobV = math::clamp(lo * t, -1.f, 1.f);
+        float knobV = math::clamp(lo * t, -2.f, 2.f);
         params[RATE_KNOB + row].setValue(knobV);
     }
 }
@@ -185,7 +192,20 @@ void QModPlusModule::process(const ProcessArgs& args) {
 
         switch (inputMode) {
             case INPUT_TRIGGER: {
-                if (trigInEdge.process(iv, 0.1f, 1.f)) resyncAll();
+                if (trigInEdge.process(iv, 0.1f, 1.f)) {
+                    resyncAll();
+                    // Propagate across the Q-array so qmods that don't have
+                    // their own trigger input still respond to this edge.
+                    auto arr = lc::walkArray(this);
+                    for (auto* m : arr) {
+                        if (!m || m == this) continue;
+                        if (m->model == modelQMod) {
+                            if (auto* q = dynamic_cast<QModModule*>(m)) q->resyncAll();
+                        } else if (m->model == modelQModPlus) {
+                            if (auto* q = dynamic_cast<QModPlusModule*>(m)) q->resyncAll();
+                        }
+                    }
+                }
                 break;
             }
             case INPUT_GATE: {
@@ -289,36 +309,43 @@ void QModPlusModule::process(const ProcessArgs& args) {
                 ? 1.f - (smoothCounter[i] / smoothPeriod[i])
                 : 1.f;
             progress = math::clamp(progress, 0.f, 1.f);
-            // Smooth random already produces a continuous slew between
-            // random targets, so the output LPF would just smear it further.
-            // Keep smootherstep shaping here as before.
-            float curved = progress * progress * (3.f - 2.f * progress);
-            float shape = progress + (curved - progress) * activeSmoothness;
+            // Always full smootherstep — independent of the smoothness
+            // slider.
+            float shape = progress * progress * (3.f - 2.f * progress);
             v01 = smoothFrom[i] + (smoothTo[i] - smoothFrom[i]) * shape;
             smoothCounter[i] -= 1.f;
-        } else { // MODE_RAND_TRIG
+        } else if (m == MODE_RAND_TRIG) {
             if (trigCounter[i] <= 0.f) {
-                trigPulse[i].trigger(1e-3f);    // 1 ms pulse
-                // Randomise the next interval ±50% so triggers feel organic
-                // rather than metronomic; mean interval = sr / f.
+                trigPulse[i].trigger(1e-3f);
                 float mean = sr / f;
                 float jitter = mean * (0.5f + random::uniform());
                 trigCounter[i] = jitter;
             }
             trigCounter[i] -= 1.f;
             bool hi = trigPulse[i].process(args.sampleTime);
-            // Triggers live in the positive half of the chosen range so
-            // "Bipolar -5..5V" still produces a +5V pulse.
             outV = hi ? mapToVoltage(i, 1.f) : mapToVoltage(i, 0.5f);
             if (hi) outV = std::max(outV, 5.f);
             else outV = 0.f;
-            // Flash on trigger, then decay so the LED stays readable at the
-            // UI's 60 fps even for sub-millisecond pulses.
             if (hi) modLevel[i] = 1.f;
             else    modLevel[i] = std::max(0.f, modLevel[i] - args.sampleTime / 0.12f);
-            // Random triggers skip the slew (pulses must stay crisp) and the
-            // common voltage mapping below — but still honour atten/offset so
-            // a slot can be biased or inverted without rewiring.
+            outV = outV * attenuator[i] + offset[i];
+            outputs[MOD_OUTPUT + i].setVoltage(outV);
+            continue;
+        } else { // MODE_RAND_GATE
+            if (trigCounter[i] <= 0.f) {
+                gateState[i] = !gateState[i];
+                float mean = sr / f;
+                float jitter = mean * (0.5f + random::uniform());
+                trigCounter[i] = jitter;
+            }
+            trigCounter[i] -= 1.f;
+            if (gateState[i]) {
+                outV = std::max(mapToVoltage(i, 1.f), 5.f);
+                modLevel[i] = 1.f;
+            } else {
+                outV = 0.f;
+                modLevel[i] = 0.f;
+            }
             outV = outV * attenuator[i] + offset[i];
             outputs[MOD_OUTPUT + i].setVoltage(outV);
             continue;
@@ -537,6 +564,7 @@ static NVGcolor modeColor(int m) {
         case QModPlusModule::MODE_SMOOTH:    return nvgRGB(70, 200, 210);  // cyan
         case QModPlusModule::MODE_SH:        return nvgRGB(180, 80, 220);  // purple
         case QModPlusModule::MODE_LFO:       return nvgRGB(60, 210, 90);   // green
+        case QModPlusModule::MODE_RAND_GATE: return nvgRGB(245, 210, 90);  // gold
     }
     return nvgRGB(180, 180, 180);
 }
@@ -873,6 +901,7 @@ void QModPlusWidget::appendContextMenu(Menu* menu) {
             case QModPlusModule::MODE_SMOOTH:    return "Smooth random";
             case QModPlusModule::MODE_SH:        return "Sample & hold";
             case QModPlusModule::MODE_LFO:       return "LFO";
+            case QModPlusModule::MODE_RAND_GATE: return "Random gates";
         }
         return "";
     };
@@ -891,6 +920,7 @@ void QModPlusWidget::appendContextMenu(Menu* menu) {
             addMode(QModPlusModule::MODE_SMOOTH);
             addMode(QModPlusModule::MODE_SH);
             addMode(QModPlusModule::MODE_LFO);
+            addMode(QModPlusModule::MODE_RAND_GATE);
         };
     };
     menu->addChild(createSubmenuItem("Left column mode", modeLabel(qm->modeL), modePicker(0)));
