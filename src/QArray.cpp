@@ -64,8 +64,25 @@ int indexInArray(rack::engine::Module* m) {
 }
 
 int arraySlotBase(rack::engine::Module* m) {
-    int idx = indexInArray(m);
-    return (idx < 0) ? 0 : idx * 14;
+    // Counts preceding modules in the same family as `m` so qmaps are
+    // numbered independently from qmods/qmod+s. This lets a qmap slot "N"
+    // line up positionally with a qmod slot "N" across the array, which is
+    // how assignments and array-feeds are visually paired.
+    if (!m) return 0;
+    auto arr = walkArray(m);
+    const bool mIsQMap = (m->model == modelQMap);
+    int count = 0;
+    for (auto* x : arr) {
+        if (x == m) break;
+        if (!x) continue;
+        if (mIsQMap) {
+            if (x->model == modelQMap) count++;
+        } else {
+            // qmod family = qmod OR qmod+
+            if (x->model == modelQMod || x->model == modelQModPlus) count++;
+        }
+    }
+    return count * 14;
 }
 
 } // namespace lc

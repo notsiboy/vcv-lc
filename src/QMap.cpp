@@ -121,6 +121,7 @@ void QMapModule::process(const ProcessArgs& args) {
             ? math::clamp((v + 5.f) / 10.f, 0.f, 1.f)
             : math::clamp(v / 10.f, 0.f, 1.f);
         modLevel[i] = haveSignal ? t : 0.f;
+        hasSignal[i] = haveSignal;
 
         engine::ParamHandle& h = paramHandles[i];
         if (!h.module || !haveSignal) continue;
@@ -329,6 +330,7 @@ struct SlotArmButton : widget::OpaqueWidget {
 
     bool armed() const { return qm && qm->armedSlot == slot; }
     bool bound() const { return qm && qm->paramHandles[slot].module != nullptr; }
+    bool hasSignal() const { return qm && qm->hasSignal[slot]; }
     float level() const {
         return qm ? math::clamp(qm->modLevel[slot], 0.f, 1.f) : 0.f;
     }
@@ -336,13 +338,19 @@ struct SlotArmButton : widget::OpaqueWidget {
     void draw(const DrawArgs& args) override {
         bool dark = lc::theme.dark;
         drawRoundButton(args.vg, box.size.x, box.size.y, dark);
+        const NVGcolor WHITE = nvgRGB(230, 230, 230);
         if (armed()) {
             drawCenterDot(args.vg, box.size.x, box.size.y, AMBER, true, dark, 0.55f);
         } else if (bound()) {
-            // Bound slot: fade the amber dot with the incoming CV so the
-            // LED visibly pulses along with whatever's driving the param.
+            // Bound slot: fade the amber dot with the incoming CV.
             float b = 0.2f + 0.8f * level();
             NVGcolor tinted = nvgRGBf(AMBER.r * b, AMBER.g * b, AMBER.b * b);
+            drawCenterDot(args.vg, box.size.x, box.size.y, tinted, true, dark, 0.30f);
+        } else if (hasSignal()) {
+            // Unmapped but receiving signal (usually via the array auto-feed).
+            // White tinting so it's visually distinct from amber "mapped".
+            float b = 0.2f + 0.8f * level();
+            NVGcolor tinted = nvgRGBf(WHITE.r * b, WHITE.g * b, WHITE.b * b);
             drawCenterDot(args.vg, box.size.x, box.size.y, tinted, true, dark, 0.30f);
         } else {
             drawCenterDot(args.vg, box.size.x, box.size.y, AMBER, false, dark, 0.30f);
@@ -351,15 +359,17 @@ struct SlotArmButton : widget::OpaqueWidget {
 
     void drawLayer(const DrawArgs& args, int layer) override {
         if (layer != 1 || !qm) { Widget::drawLayer(args, layer); return; }
+        const NVGcolor WHITE = nvgRGB(230, 230, 230);
         if (armed()) {
             drawCenterDotGlow(args.vg, box.size.x, box.size.y, AMBER, amberPulse(), 0.55f);
         } else if (bound()) {
-            // Glow on layer 1 so bright peaks visibly punch through the
-            // dark theme. Stays off when the CV is near its minimum.
             float a = level();
-            if (a > 0.f) {
+            if (a > 0.f)
                 drawCenterDotGlow(args.vg, box.size.x, box.size.y, AMBER, a, 0.30f);
-            }
+        } else if (hasSignal()) {
+            float a = level();
+            if (a > 0.f)
+                drawCenterDotGlow(args.vg, box.size.x, box.size.y, WHITE, a, 0.30f);
         }
         Widget::drawLayer(args, layer);
     }
