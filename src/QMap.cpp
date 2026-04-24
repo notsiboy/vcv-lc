@@ -416,7 +416,8 @@ struct MasterArmButton : widget::OpaqueWidget {
 
     void onButton(const event::Button& e) override {
         OpaqueWidget::onButton(e);
-        if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT && qm) {
+        if (e.action != GLFW_PRESS || !qm) return;
+        if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
             // If the button is already in its flashing-amber sequential-arm
             // state, clicking again cancels the whole mapping pass rather
             // than advancing to the next slot.
@@ -426,6 +427,35 @@ struct MasterArmButton : widget::OpaqueWidget {
             } else {
                 qm->advanceArm();
             }
+            e.consume(this);
+        } else if (e.button == GLFW_MOUSE_BUTTON_RIGHT) {
+            // Quick-access popover: the four mapping-bank actions from the
+            // module menu, reachable without opening the full context menu.
+            ui::Menu* menu = createMenu();
+            menu->addChild(createMenuItem("Arm all (sequential)", "", [=]() {
+                qm->armedSlot = 0;
+                qm->sequentialArm = true;
+            }));
+            menu->addChild(createMenuItem("Clear all mappings", "", [=]() {
+                json_t* before = qm->dataToJson();
+                for (int i = 0; i < QMapModule::NUM_SLOTS; i++) qm->clearSlot(i);
+                qm->armedSlot = -1;
+                qm->sequentialArm = false;
+                pushQMapJsonAction(qm, before, "clear qmap mappings");
+            }));
+            menu->addChild(new MenuSeparator);
+            menu->addChild(createMenuItem("Copy mappings", "", [=]() {
+                if (g_qmapClipboard) json_decref(g_qmapClipboard);
+                g_qmapClipboard = qm->dataToJson();
+            }));
+            menu->addChild(createMenuItem("Paste mappings", "",
+                [=]() {
+                    if (!g_qmapClipboard) return;
+                    json_t* before = qm->dataToJson();
+                    qm->dataFromJson(g_qmapClipboard);
+                    pushQMapJsonAction(qm, before, "paste qmap mappings");
+                },
+                /*disabled*/ g_qmapClipboard == nullptr));
             e.consume(this);
         }
     }
