@@ -79,6 +79,9 @@ struct QModPlusModule : Module {
     int range[NUM_SLOTS];
     float attenuator[NUM_SLOTS];
     float offset[NUM_SLOTS];
+    // Per-slot asymmetric output slew — see QMod.hpp for the convention.
+    float slew[NUM_SLOTS];
+    float slewShape[NUM_SLOTS];
 
     // qmod+ has no persistent "stagger" state. The row knobs are the single
     // source of truth for per-row rate; `spreadRatio` just parameterises the

@@ -59,6 +59,14 @@ struct QModModule : Module {
     int range[NUM_SLOTS];
     float attenuator[NUM_SLOTS];
     float offset[NUM_SLOTS];
+    // Per-slot asymmetric output slew.
+    //   slew       0..1 — amount of slew (0 = instant, 1 = ~0.3 s rise/fall)
+    //   slewShape -1..+1 — symmetry. -1 → short rise, long fall.
+    //                     0  → symmetric. +1 → long rise, short fall.
+    // Random triggers and random gates bypass the slew so pulses/gates
+    // stay crisp; every other mode honours it.
+    float slew[NUM_SLOTS];
+    float slewShape[NUM_SLOTS];
 
     bool rateSpread = true;
     float globalRate = 4.5f;

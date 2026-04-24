@@ -60,6 +60,8 @@ QModPlusModule::QModPlusModule() {
         range[i] = RANGE_BI_5;
         attenuator[i] = 1.f;
         offset[i] = 0.f;
+        slew[i] = 0.f;
+        slewShape[i] = 0.f;
         phase[i] = random::uniform();
         shValue[i] = 0.f;
         shCounter[i] = 0.f;
@@ -314,6 +316,7 @@ void QModPlusModule::process(const ProcessArgs& args) {
             float shape = progress * progress * (3.f - 2.f * progress);
             v01 = smoothFrom[i] + (smoothTo[i] - smoothFrom[i]) * shape;
             smoothCounter[i] -= 1.f;
+            slewable = true;
         } else if (m == MODE_RAND_TRIG) {
             if (trigCounter[i] <= 0.f) {
                 trigPulse[i].trigger(1e-3f);
@@ -351,18 +354,22 @@ void QModPlusModule::process(const ProcessArgs& args) {
             continue;
         }
 
-        // Output slew for modes that would otherwise emit step changes
-        // (S+H, triggered S+H) or benefit from soft filtering (LFO). Time
-        // constant is quadratic so the slider's lower half stays subtle.
-        if (slewable && activeSmoothness > 0.f) {
-            const float maxTau = 0.3f;  // seconds at smoothness = 1
-            float tau = activeSmoothness * activeSmoothness * maxTau;
-            float alpha = 1.f - std::exp(-args.sampleTime / (tau + 1e-6f));
-            slewState[i] += alpha * (v01 - slewState[i]);
-            v01 = slewState[i];
+        // Asymmetric output slew — see QMod.cpp for the convention.
+        float slewAmt = std::max(slew[i], activeSmoothness);
+        if (slewable && slewAmt > 0.f) {
+            const float maxTau = 0.3f;
+            float sh = math::clamp(slewShape[i], -1.f, 1.f);
+            bool rising = (v01 > slewState[i]);
+            float frac = rising ? (1.f + sh) : (1.f - sh);
+            float tau = slewAmt * slewAmt * maxTau * frac;
+            if (tau > 1e-6f) {
+                float alpha = 1.f - std::exp(-args.sampleTime / tau);
+                slewState[i] += alpha * (v01 - slewState[i]);
+                v01 = slewState[i];
+            } else {
+                slewState[i] = v01;
+            }
         } else {
-            // Keep the slew state locked to the raw signal while smoothing
-            // is disabled so turning the knob up doesn't cause a jump.
             slewState[i] = v01;
         }
 
@@ -391,6 +398,14 @@ json_t* QModPlusModule::dataToJson() {
     }
     json_object_set_new(root, "attens", attensJ);
     json_object_set_new(root, "offsets", offsetsJ);
+    json_t* slewsJ = json_array();
+    json_t* slewShapesJ = json_array();
+    for (int i = 0; i < NUM_SLOTS; i++) {
+        json_array_append_new(slewsJ,      json_real(slew[i]));
+        json_array_append_new(slewShapesJ, json_real(slewShape[i]));
+    }
+    json_object_set_new(root, "slews",      slewsJ);
+    json_object_set_new(root, "slewShapes", slewShapesJ);
     json_t* rangesJ = json_array();
     for (int i = 0; i < NUM_SLOTS; i++)
         json_array_append_new(rangesJ, json_integer(range[i]));
@@ -427,6 +442,15 @@ void QModPlusModule::dataFromJson(json_t* root) {
     if (json_t* a = json_object_get(root, "offsets")) {
         size_t n = std::min((size_t)NUM_SLOTS, json_array_size(a));
         for (size_t i = 0; i < n; i++) offset[i] = json_real_value(json_array_get(a, i));
+    }
+    for (int i = 0; i < NUM_SLOTS; i++) { slew[i] = 0.f; slewShape[i] = 0.f; }
+    if (json_t* a = json_object_get(root, "slews")) {
+        size_t n = std::min((size_t)NUM_SLOTS, json_array_size(a));
+        for (size_t i = 0; i < n; i++) slew[i] = json_real_value(json_array_get(a, i));
+    }
+    if (json_t* a = json_object_get(root, "slewShapes")) {
+        size_t n = std::min((size_t)NUM_SLOTS, json_array_size(a));
+        for (size_t i = 0; i < n; i++) slewShape[i] = json_real_value(json_array_get(a, i));
     }
     if (json_t* rangesJ = json_object_get(root, "ranges")) {
         size_t n = std::min((size_t)NUM_SLOTS, json_array_size(rangesJ));
@@ -761,27 +785,52 @@ struct QModPlusOutputPort : ThemedPJ301MPort {
 
     void appendContextMenu(ui::Menu* menu) override {
         if (!qm) return;
-        menu->addChild(new MenuSeparator);
-        menu->addChild(createMenuLabel(string::f("Mod %d range", slot + 1)));
-        auto addRange = [&](const char* label, int r) {
-            menu->addChild(createCheckMenuItem(label, "",
-                [=]() { return qm && qm->range[slot] == r; },
-                [=]() { if (qm) qm->range[slot] = r; }));
-        };
-        addRange("Unipolar 0..10V", QModPlusModule::RANGE_UNI_10);
-        addRange("Unipolar 0..5V",  QModPlusModule::RANGE_UNI_5);
-        addRange("Unipolar 0..1V",  QModPlusModule::RANGE_UNI_1);
-        addRange("Bipolar -10..10V", QModPlusModule::RANGE_BI_10);
-        addRange("Bipolar -5..5V",   QModPlusModule::RANGE_BI_5);
-        addRange("Bipolar -1..1V",   QModPlusModule::RANGE_BI_1);
 
+        auto rangeLabel = [](int r) -> std::string {
+            switch (r) {
+                case QModPlusModule::RANGE_UNI_10: return "0..10 V";
+                case QModPlusModule::RANGE_UNI_5:  return "0..5 V";
+                case QModPlusModule::RANGE_UNI_1:  return "0..1 V";
+                case QModPlusModule::RANGE_BI_10:  return "-10..10 V";
+                case QModPlusModule::RANGE_BI_5:   return "-5..5 V";
+                case QModPlusModule::RANGE_BI_1:   return "-1..1 V";
+            }
+            return "";
+        };
+        QModPlusModule* qmLocal = qm;
+        int slotLocal = slot;
         menu->addChild(new MenuSeparator);
+        menu->addChild(createSubmenuItem(
+            string::f("Mod %d range", slot + 1), rangeLabel(qm->range[slot]),
+            [=](ui::Menu* sub) {
+                auto addRange = [&](const char* label, int r) {
+                    sub->addChild(createCheckMenuItem(label, "",
+                        [=]() { return qmLocal->range[slotLocal] == r; },
+                        [=]() { qmLocal->range[slotLocal] = r; }));
+                };
+                sub->addChild(createMenuLabel("Unipolar"));
+                addRange("0..10 V", QModPlusModule::RANGE_UNI_10);
+                addRange("0..5 V",  QModPlusModule::RANGE_UNI_5);
+                addRange("0..1 V",  QModPlusModule::RANGE_UNI_1);
+                sub->addChild(new MenuSeparator);
+                sub->addChild(createMenuLabel("Bipolar"));
+                addRange("-10..10 V", QModPlusModule::RANGE_BI_10);
+                addRange("-5..5 V",   QModPlusModule::RANGE_BI_5);
+                addRange("-1..1 V",   QModPlusModule::RANGE_BI_1);
+            }));
+
         menu->addChild(createMenuLabel("Attenuator"));
         menu->addChild(new MenuSlider(new FloatQuantity(
             &qm->attenuator[slot], "Attenuator", "×", -2.f, 2.f, 1.f, 2)));
         menu->addChild(createMenuLabel("Offset"));
         menu->addChild(new MenuSlider(new FloatQuantity(
             &qm->offset[slot], "Offset", " V", -10.f, 10.f, 0.f, 2)));
+        menu->addChild(createMenuLabel("Slew"));
+        menu->addChild(new MenuSlider(new FloatQuantity(
+            &qm->slew[slot], "Slew", "", 0.f, 1.f, 0.f, 2)));
+        menu->addChild(createMenuLabel("Slew shape (fall ← → rise)"));
+        menu->addChild(new MenuSlider(new FloatQuantity(
+            &qm->slewShape[slot], "Shape", "", -1.f, 1.f, 0.f, 2)));
     }
 };
 
