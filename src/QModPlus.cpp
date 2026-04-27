@@ -888,10 +888,6 @@ QModPlusWidget::QModPlusWidget(QModPlusModule* module) {
     bg->box.size = box.size;
     addChild(bg);
 
-    float screwX = (box.size.x - RACK_GRID_WIDTH) / 2.f;
-    addChild(createWidget<ScrewBlack>(Vec(screwX, 0)));
-    addChild(createWidget<ScrewBlack>(Vec(screwX, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
-
     app::PanelBorder* border = new app::PanelBorder;
     border->box.size = box.size;
     addChild(border);

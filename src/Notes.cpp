@@ -1752,11 +1752,6 @@ struct NotesWidget : ModuleWidget {
     NotesTextField* titleField = nullptr;
     NotesResizeHandle* handle = nullptr;
     NotesLogo* logo = nullptr;
-    Widget* topLeftScrew = nullptr;
-    Widget* topRightScrew = nullptr;
-    Widget* bottomLeftScrew = nullptr;
-    Widget* bottomRightScrew = nullptr;
-
     static constexpr float LOGO_MM = 9.f;
     static constexpr float HANDLE_PX = 14.f;
 
@@ -1773,16 +1768,6 @@ struct NotesWidget : ModuleWidget {
         border = new app::PanelBorder;
         border->box.size = box.size;
         addChild(border);
-
-        // Screws: 1 HP inset from corners
-        topLeftScrew     = createWidget<ScrewBlack>(Vec(RACK_GRID_WIDTH, 0));
-        topRightScrew    = createWidget<ScrewBlack>(Vec(box.size.x - RACK_GRID_WIDTH * 2, 0));
-        bottomLeftScrew  = createWidget<ScrewBlack>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH));
-        bottomRightScrew = createWidget<ScrewBlack>(Vec(box.size.x - RACK_GRID_WIDTH * 2, RACK_GRID_HEIGHT - RACK_GRID_WIDTH));
-        addChild(topLeftScrew);
-        addChild(topRightScrew);
-        addChild(bottomLeftScrew);
-        addChild(bottomRightScrew);
 
         titleField = new NotesTextField;
         titleField->nm = module;
@@ -1824,7 +1809,6 @@ struct NotesWidget : ModuleWidget {
 
     void layout() {
         if (titleField) {
-            // Centered between the two top screws, padded so text doesn't clip.
             float x0 = RACK_GRID_WIDTH * 2.f;
             float x1 = box.size.x - RACK_GRID_WIDTH * 2.f;
             float titleY = 2.f;
@@ -1851,10 +1835,6 @@ struct NotesWidget : ModuleWidget {
                 box.size.x - HANDLE_PX - 2.f,
                 box.size.y - HANDLE_PX - 2.f);
         }
-        if (topRightScrew)
-            topRightScrew->box.pos.x = box.size.x - RACK_GRID_WIDTH * 2;
-        if (bottomRightScrew)
-            bottomRightScrew->box.pos.x = box.size.x - RACK_GRID_WIDTH * 2;
     }
 
     void step() override {
