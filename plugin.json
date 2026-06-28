@@ -16,7 +16,7 @@
     {
       "slug": "journal",
       "name": "journal",
-      "description": "Resizable notes canvas with smart text editing, markdown formatting, headings, lists, and exports.",
+      "description": "Resizable rich-text notes canvas — markdown formatting, headings, lists, and export.",
       "tags": [
         "Utility",
         "Visual"
@@ -25,7 +25,7 @@
     {
       "slug": "tidy",
       "name": "tidy",
-      "description": "Hide or fade individual modules and cables without changing global cable opacity.",
+      "description": "Hide or fade individual modules and cables, independent of global cable opacity.",
       "tags": [
         "Utility",
         "Visual"
@@ -34,7 +34,7 @@
     {
       "slug": "capture",
       "name": "capture",
-      "description": "Export PNG snapshots and copy rack inventory (plugins, versions, module counts) for sharing.",
+      "description": "Export PNG rack snapshots and copy a plugin/version inventory for sharing.",
       "tags": [
         "Utility",
         "Visual"
@@ -43,7 +43,7 @@
     {
       "slug": "grabplus",
       "name": "grab+",
-      "description": "Smart recorder. Auto-triggered one-shot (grab), retrospective rolling buffer (take), silence-gated ring (snip), plus a big rec button — short click to force-record, long click to save take.",
+      "description": "Smart stereo recorder: auto one-shot (grab), rolling-buffer take, and silence-gated ring (snip), with a dual-action rec button.",
       "tags": [
         "Recording",
         "Utility"
@@ -52,7 +52,7 @@
     {
       "slug": "qmap",
       "name": "qmap",
-      "description": "Eight aux CV inputs that touch-map to any parameter in the rack. Per-slot unipolar/bipolar, and a master button that walks the arming cursor through all eight for one-shot full-rig assignment.",
+      "description": "Eight CV inputs that touch-map to any parameter — per-slot uni/bipolar, plus a master button for one-shot full-rig assignment.",
       "tags": [
         "Controller",
         "Utility"
@@ -61,7 +61,7 @@
     {
       "slug": "qmodplus",
       "name": "qmod+",
-      "description": "4 HP 14-slot modulation source with per-column mode cycle buttons. Five modes (random triggers, triggered S+H, smooth random, S+H, LFO) selectable per column; each slot can diverge. Joins a Q-array with neighbouring qmap / qmod modules.",
+      "description": "4 HP, 14-slot modulation source with five per-column modes (random triggers, triggered S+H, smooth random, S+H, LFO). Links into a Q-array with qmap / qmod.",
       "tags": [
         "LFO",
         "Random",
@@ -71,7 +71,7 @@
     {
       "slug": "qmod",
       "name": "qmod",
-      "description": "6 HP 14-slot modulation source. Per-column mode cycle buttons + a per-row log-scaled rate knob strip so every pair of slots can be hand-tuned relative to the base rate. Apply-stagger menu action writes a log-spread into the row knobs. Joins a Q-array with neighbouring qmap / qmod+ modules.",
+      "description": "6 HP, 14-slot modulation source: per-column modes plus per-row log-scaled rate knobs to hand-tune each pair. Links into a Q-array with qmap / qmod+.",
       "tags": [
         "LFO",
         "Random",
